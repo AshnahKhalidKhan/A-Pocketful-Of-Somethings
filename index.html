@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pocketful of Somethings</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #07070f;
+  --surface: #0f0f1a;
+  --border: rgba(255,255,255,0.08);
+  --text: rgba(255,255,255,0.85);
+  --muted: rgba(255,255,255,0.35);
+  --faint: rgba(255,255,255,0.1);
+  --done: #1D9E75;
+  --accent: #7F77DD;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  font-family: 'Syne', sans-serif;
+  color: var(--text);
+  display: flex; flex-direction: column;
+}
+
+/* ── header ── */
+header {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 18px 9px;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0; z-index: 10; position: relative;
+}
+.xp-wrap { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 120px; }
+.xp-track { flex: 1; height: 3px; background: var(--faint); border-radius: 99px; overflow: hidden; }
+.xp-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.8s cubic-bezier(.25,.8,.25,1); }
+.xp-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.legend { display: flex; gap: 14px; align-items: center; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+.leg-orb { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
+.leg-achieved { background: #1D9E75; box-shadow: 0 0 6px rgba(29,158,117,0.6); }
+.leg-pending { background: transparent; border: 1.5px dashed rgba(255,255,255,0.25); }
+.header-right { display: flex; align-items: center; gap: 8px; }
+.visitor-tag {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  padding: 4px 10px; border-radius: 99px;
+  background: rgba(127,119,221,0.08); border: 0.5px solid rgba(127,119,221,0.25);
+  color: var(--accent); white-space: nowrap; display: none;
+}
+.admin-bar { display: none; align-items: center; gap: 8px; }
+body.admin-mode .admin-bar { display: flex; }
+.admin-indicator {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  background: rgba(29,158,117,0.1); border: 0.5px solid rgba(29,158,117,0.35);
+  color: var(--done); padding: 4px 10px; border-radius: 99px;
+}
+.exit-btn {
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  padding: 4px 12px; border-radius: 99px; cursor: pointer;
+  border: 0.5px solid var(--border); background: transparent; color: var(--muted); transition: all 0.15s;
+}
+.exit-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+.btn {
+  font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 600;
+  padding: 7px 15px; border-radius: 99px; cursor: pointer;
+  border: 0.5px solid var(--border); background: transparent; color: var(--muted);
+  transition: all 0.15s; letter-spacing: 0.02em;
+}
+.btn:hover { background: var(--faint); color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { opacity: 0.88; }
+.btn.danger { border-color: rgba(220,60,60,0.4); color: rgba(220,60,60,0.7); }
+.btn.danger:hover { background: rgba(220,60,60,0.1); color: rgba(220,60,60,1); }
+.btn.ghost { border-color: rgba(127,119,221,0.35); color: var(--accent); font-size: 11px; padding: 6px 13px; }
+.btn.ghost:hover { background: rgba(127,119,221,0.1); border-color: var(--accent); }
+#add-btn { display: none; }
+body.admin-mode #add-btn { display: block; }
+
+/* ── canvas wrapper ── */
+#canvas-wrap {
+  flex: 1; position: relative; overflow: hidden;
+}
+#pixi-canvas { display: block; pointer-events: none; z-index: 1; position: absolute; inset: 0; }
+
+/* DOM overlay for labels (Pixi handles circles, DOM handles text) */
+#label-layer {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2;
+}
+.orb-label {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; text-align: center;
+  transition: opacity 0.3s;
+}
+.orb-emoji { line-height: 1; display: block; }
+.orb-name {
+  font-family: 'Syne', sans-serif; font-weight: 600;
+  color: rgba(255,255,255,0.92); line-height: 1.2;
+  text-align: center; word-break: break-word;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+}
+/* clickable hit areas (invisible, sit on top) */
+.orb-hit {
+  position: absolute; border-radius: 50%; cursor: pointer;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  pointer-events: all; z-index: 3;
+  transition: transform 0.2s cubic-bezier(.34,1.56,.64,1);
+}
+.orb-hit:hover { transform: translate(-50%, -50%) scale(1.08); z-index: 5; }
+
+/* ── secret knock dots ── */
+#knock-dots {
+  position: fixed; bottom: 8px; left: 8px;
+  display: flex; gap: 4px; z-index: 200; pointer-events: none;
+}
+.k-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0; transition: opacity 0.25s; }
+.k-dot.lit { opacity: 0.7; }
+
+/* ── overlays ── */
+.overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.72); z-index: 100;
+  align-items: center; justify-content: center;
+  backdrop-filter: blur(6px);
+}
+.overlay.open { display: flex; }
+.modal {
+  background: var(--surface);
+  border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: 18px; padding: 2rem 1.75rem 1.5rem;
+  width: min(380px, 93vw); position: relative;
+  max-height: 92dvh; overflow-y: auto;
+}
+.modal-close {
+  position: absolute; top: 14px; right: 16px;
+  background: none; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer;
+}
+.modal-close:hover { color: var(--text); }
+.modal-emoji { font-size: 48px; text-align: center; margin-bottom: 12px; }
+.modal-img-preview { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; display: block; margin: 0 auto 12px; }
+.modal-name { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; margin-bottom: 6px; }
+.modal-desc { font-size: 13px; color: var(--muted); line-height: 1.65; text-align: center; margin-bottom: 14px; }
+.modal-pills { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.pill { font-family: 'DM Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 99px; border: 0.5px solid var(--border); color: var(--muted); }
+.pill.achieved { border-color: rgba(29,158,117,0.5); color: var(--done); }
+.pill.pending-pill { border-color: rgba(127,119,221,0.4); color: var(--accent); }
+.modal-admin-actions { display: none; margin-top: 1.1rem; gap: 8px; justify-content: center; }
+body.admin-mode .modal-admin-actions { display: flex; }
+
+/* ── form ── */
+.form-title { font-size: 16px; font-weight: 700; margin-bottom: 1.25rem; }
+.field { margin-bottom: 13px; }
+.field label { display: block; font-size: 11px; font-family: 'DM Mono', monospace; color: var(--muted); margin-bottom: 5px; letter-spacing: 0.05em; }
+.field input, .field textarea, .field select {
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--border); border-radius: 8px;
+  color: var(--text); font-family: 'Syne', sans-serif; font-size: 14px;
+  padding: 9px 12px; outline: none; transition: border-color 0.15s; appearance: none;
+}
+.field input:focus, .field textarea:focus, .field select:focus { border-color: rgba(127,119,221,0.5); }
+.field input[type=file] { padding: 7px 10px; font-size: 12px; color: var(--muted); }
+.field textarea { resize: vertical; min-height: 60px; }
+.field select option { background: #1a1a2e; }
+.icon-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.itab {
+  font-family: 'DM Mono', monospace; font-size: 11px; padding: 5px 12px;
+  border-radius: 99px; border: 0.5px solid var(--border);
+  background: transparent; color: var(--muted); cursor: pointer; transition: all 0.13s;
+}
+.itab.active { border-color: var(--accent); color: var(--accent); background: rgba(127,119,221,0.1); }
+.icon-panel { display: none; }
+.icon-panel.active { display: block; }
+.emoji-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; }
+.ep-btn {
+  font-size: 19px; border-radius: 7px; border: 0.5px solid var(--border);
+  background: transparent; cursor: pointer; padding: 3px; text-align: center; transition: background 0.12s;
+}
+.ep-btn:hover, .ep-btn.selected { background: rgba(127,119,221,0.25); border-color: var(--accent); }
+.icon-preview-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.icon-preview { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 0.5px solid var(--border); display: none; }
+.icon-preview.show { display: block; }
+.status-toggle { display: flex; gap: 8px; }
+.status-btn {
+  flex: 1; padding: 8px; border-radius: 8px; border: 0.5px solid var(--border);
+  background: transparent; color: var(--muted); font-family: 'Syne', sans-serif;
+  font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+}
+.status-btn.sel-achieved { border-color: var(--done); background: rgba(29,158,117,0.12); color: var(--done); }
+.status-btn.sel-pending  { border-color: var(--accent); background: rgba(127,119,221,0.1); color: var(--accent); }
+.form-actions { display: flex; gap: 8px; margin-top: 1.1rem; }
+.form-actions .btn { flex: 1; }
+
+/* ── password modal ── */
+.pw-modal { width: min(300px, 90vw); }
+.pw-title { font-size: 15px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+.pw-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.25rem; font-family: 'DM Mono', monospace; }
+.pw-error { font-size: 11px; color: rgba(220,80,80,0.85); text-align: center; margin-top: 8px; font-family: 'DM Mono', monospace; min-height: 16px; }
+
+/* ── onboarding ── */
+.onboard-modal { width: min(480px, 95vw); }
+.onboard-steps { display: flex; gap: 6px; margin-bottom: 1.5rem; }
+.ostep { flex: 1; height: 3px; border-radius: 99px; background: var(--faint); transition: background 0.3s; }
+.ostep.done { background: var(--accent); }
+.ostep.active { background: rgba(127,119,221,0.5); }
+.onboard-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+.onboard-sub { font-size: 13px; color: var(--muted); line-height: 1.65; margin-bottom: 1.25rem; }
+.onboard-sub a { color: var(--accent); text-decoration: none; }
+.onboard-sub a:hover { text-decoration: underline; }
+.onboard-sub code { background: rgba(255,255,255,0.07); padding: 2px 6px; border-radius: 4px; font-family: 'DM Mono',monospace; font-size: 11px; }
+.onboard-step-content { min-height: 110px; }
+.onboard-actions { display: flex; gap: 8px; margin-top: 1.25rem; }
+.onboard-actions .btn { flex: 1; }
+.onboard-error { font-family: 'DM Mono', monospace; font-size: 11px; color: rgba(220,80,80,0.8); margin-top: 8px; min-height: 16px; }
+.onboard-success { text-align: center; padding: 0.5rem 0; }
+.onboard-success-icon { font-size: 44px; margin-bottom: 10px; }
+.onboard-success-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+.onboard-success-sub { font-size: 13px; color: var(--muted); line-height: 1.65; margin-bottom: 1.25rem; }
+.copy-url-wrap { display: flex; gap: 8px; align-items: center; }
+.copy-url-input {
+  flex: 1; background: rgba(255,255,255,0.04); border: 0.5px solid var(--border);
+  border-radius: 8px; color: var(--muted); font-family: 'DM Mono', monospace;
+  font-size: 10px; padding: 8px 10px; outline: none;
+}
+.copy-btn {
+  font-family: 'DM Mono', monospace; font-size: 11px; padding: 7px 14px;
+  border-radius: 8px; cursor: pointer; border: 0.5px solid var(--accent);
+  background: transparent; color: var(--accent); transition: all 0.15s; white-space: nowrap;
+}
+.copy-btn:hover { background: rgba(127,119,221,0.1); }
+
+/* ── delete confirm ── */
+.del-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.5rem; font-family: 'DM Mono', monospace; }
+
+/* ── sync status ── */
+#sync-status {
+  position: fixed; bottom: 28px; right: 16px;
+  font-family: 'DM Mono', monospace; font-size: 10px;
+  padding: 4px 10px; border-radius: 99px; z-index: 200;
+  transition: opacity 0.4s; pointer-events: none; opacity: 0;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="xp-wrap">
+    <span class="xp-label" id="xp-lbl">0 XP</span>
+    <div class="xp-track"><div class="xp-fill" id="xp-fill" style="width:0%"></div></div>
+    <span class="xp-label" id="xp-pct">0%</span>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="leg-orb leg-achieved"></div>achieved</div>
+    <div class="legend-item"><div class="leg-orb leg-pending"></div>in progress</div>
+  </div>
+  <div class="header-right">
+    <div class="visitor-tag" id="visitor-tag"></div>
+    <div class="admin-bar">
+      <span class="admin-indicator">admin</span>
+      <button class="exit-btn" onclick="exitAdmin()">exit ✕</button>
+    </div>
+    <button class="btn primary" id="add-btn" onclick="openAddModal()">+ add</button>
+    <button class="btn ghost" onclick="openOnboarding()">make your own ↗</button>
+  </div>
+</header>
+
+<div id="canvas-wrap">
+  <div id="label-layer"></div>
+</div>
+
+<div id="knock-dots">
+  <div class="k-dot" id="kd0"></div>
+  <div class="k-dot" id="kd1"></div>
+  <div class="k-dot" id="kd2"></div>
+</div>
+<div id="sync-status"></div>
+
+<!-- detail modal -->
+<div class="overlay" id="detail-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('detail-overlay')">✕</button>
+    <div id="m-icon-wrap"></div>
+    <div class="modal-name" id="m-name"></div>
+    <div class="modal-desc" id="m-desc"></div>
+    <div class="modal-pills" id="m-pills"></div>
+    <div class="modal-admin-actions" id="m-admin-actions">
+      <button class="btn" id="m-edit-btn" onclick="adminEditFromDetail()">edit</button>
+      <button class="btn" id="m-toggle-btn" onclick="adminToggleFromDetail()">mark achieved</button>
+      <button class="btn danger" onclick="adminDeleteFromDetail()">remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- password modal -->
+<div class="overlay" id="pw-overlay">
+  <div class="modal pw-modal">
+    <button class="modal-close" onclick="closeModal('pw-overlay')">✕</button>
+    <div class="pw-title">Enter passphrase</div>
+    <div class="pw-sub">admin access required</div>
+    <div class="field">
+      <input type="password" id="pw-input" placeholder="••••••••" onkeydown="if(event.key==='Enter')checkPw()">
+    </div>
+    <div class="pw-error" id="pw-error"></div>
+    <div class="form-actions" style="margin-top:.75rem">
+      <button class="btn" onclick="closeModal('pw-overlay')">cancel</button>
+      <button class="btn primary" onclick="checkPw()">unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- add/edit modal -->
+<div class="overlay" id="add-overlay">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-overlay')">✕</button>
+    <div class="form-title" id="form-title">New something</div>
+    <input type="hidden" id="f-edit-id" value="">
+    <div class="field">
+      <label>Name</label>
+      <input id="f-name" type="text" placeholder="e.g. Published paper" maxlength="32">
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="f-desc" placeholder="What does this mean to you?"></textarea>
+    </div>
+    <div class="field">
+      <label>Significance</label>
+      <select id="f-tier">
+        <option value="1">Tiny (1)</option>
+        <option value="2">Small (2)</option>
+        <option value="3" selected>Medium (3)</option>
+        <option value="4">Large (4)</option>
+        <option value="5">Huge (5)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Icon</label>
+      <div class="icon-tabs">
+        <button class="itab active" onclick="switchIconTab('emoji',this)">emoji</button>
+        <button class="itab" onclick="switchIconTab('upload',this)">upload</button>
+        <button class="itab" onclick="switchIconTab('url',this)">link</button>
+      </div>
+      <div class="icon-panel active" id="ip-emoji">
+        <div class="emoji-grid" id="emoji-grid"></div>
+      </div>
+      <div class="icon-panel" id="ip-upload">
+        <div class="icon-preview-wrap">
+          <input type="file" id="f-img-file" accept="image/*" onchange="handleFileUpload(this)">
+          <img id="upload-preview" class="icon-preview" src="" alt="">
+        </div>
+      </div>
+      <div class="icon-panel" id="ip-url">
+        <div class="icon-preview-wrap">
+          <input type="text" id="f-img-url" placeholder="https://..." oninput="handleUrlInput(this)">
+          <img id="url-preview" class="icon-preview" src="" alt="">
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <div class="status-toggle">
+        <button class="status-btn sel-achieved" id="sb-achieved" onclick="selectStatus('achieved')">✦ Achieved</button>
+        <button class="status-btn" id="sb-pending" onclick="selectStatus('pending')">◌ In progress</button>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeModal('add-overlay')">Cancel</button>
+      <button class="btn primary" onclick="saveSkill()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- delete confirm -->
+<div class="overlay" id="del-overlay">
+  <div class="modal pw-modal">
+    <div class="pw-title">Remove this?</div>
+    <div class="del-sub" id="del-name"></div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeModal('del-overlay')">cancel</button>
+      <button class="btn danger" onclick="confirmDelete()">remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- onboarding modal -->
+<div class="overlay" id="onboard-overlay">
+  <div class="modal onboard-modal">
+    <button class="modal-close" onclick="closeModal('onboard-overlay')">✕</button>
+    <div class="onboard-steps">
+      <div class="ostep active" id="os0"></div>
+      <div class="ostep" id="os1"></div>
+      <div class="ostep" id="os2"></div>
+    </div>
+    <div class="onboard-step-content" id="onboard-content"></div>
+    <div class="onboard-error" id="onboard-error"></div>
+    <div class="onboard-actions" id="onboard-actions"></div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════
+   CONFIG
+════════════════════════════════════════════ */
+const ADMIN_PASSWORD = 'pocketful2025';
+const OWNER_GIST_ID  = 'e019b7babf70f4dd72c07d19e2996fcf';
+const OWNER_TOKEN    = 'PASTE_YOUR_NEW_TOKEN_HERE';
+const GIST_FILE      = 'pocketful.json';
+const OWNER_USERNAME = 'AshnahKhalidKhan';
+
+const EMOJIS = ['⚛️','🧮','☁️','🤖','🌍','🎓','🧠','🦾','💡','📄','🎤','🔧','⚙️','🏛️','🚀','🔬','🧬','📡','🛸','⚡','🌐','🔭','💻','🧩','🏆','🎯','🧪','📊','🛠️','🌱','💎','🔮','🎲','🔑','🧲','🛡️','⭐','🌀'];
+
+const TIER_SCALE = {1:0.48, 2:0.78, 3:1.15, 4:1.68, 5:2.35};
+
+const ORB_BG_FALLBACK = {
+  Quantum:'#2d1f6e', Engineering:'#0f3d2a', Robotics:'#4a1f0e',
+  Community:'#4a3200', Research:'#3d0f2a', Milestone:'#0a2545', Other:'#1a1a2e'
+};
+
+const DEFAULT_SKILLS = [
+  {id:1,  name:'QWorld cert',     desc:'Completed quantum computing fundamentals via QWorld.',               glyph:'⚛️', img:null, cat:'Quantum',     achieved:true,  xp:120, tier:2},
+  {id:2,  name:'BV capstone',     desc:'Generalized the BV algorithm to Svetlichny-like functions.',         glyph:'🧮', img:null, cat:'Quantum',     achieved:true,  xp:200, tier:4},
+  {id:3,  name:'Cloud ops lead',  desc:'Leading cloud operations at Astera Software.',                       glyph:'☁️', img:null, cat:'Engineering', achieved:true,  xp:150, tier:3},
+  {id:4,  name:'WRO judge',       desc:'Judged and mentored at the World Robot Olympiad Pakistan.',          glyph:'🤖', img:null, cat:'Robotics',    achieved:true,  xp:110, tier:1},
+  {id:5,  name:'NYUAD hackathon', desc:'Competed at NYUAD International Hackathon for Social Good.',        glyph:'🌍', img:null, cat:'Community',   achieved:true,  xp:80,  tier:1},
+  {id:6,  name:'Fulbright app',   desc:'Submitted Fulbright Master\'s application in Robotics.',            glyph:'🎓', img:null, cat:'Milestone',   achieved:true,  xp:250, tier:5},
+  {id:7,  name:'QML research',    desc:'Apply Quantum Machine Learning to BCI systems.',                    glyph:'🧠', img:null, cat:'Quantum',     achieved:false, xp:300, tier:4},
+  {id:8,  name:'MSc Robotics',    desc:'Complete an MSc in Robotics at CMU or equivalent.',                 glyph:'🦾', img:null, cat:'Robotics',    achieved:false, xp:400, tier:5},
+  {id:9,  name:'BCI developer',   desc:'Build and publish original brain-computer interface work.',         glyph:'💡', img:null, cat:'Research',    achieved:false, xp:280, tier:3},
+  {id:10, name:'Published paper', desc:'Peer-reviewed publication in quantum or neuroengineering.',         glyph:'📄', img:null, cat:'Research',    achieved:false, xp:320, tier:2},
+  {id:11, name:'Conference talk', desc:'Present research at an international conference.',                  glyph:'🎤', img:null, cat:'Community',   achieved:false, xp:180, tier:1},
+  {id:12, name:'Open source',     desc:'Merge a meaningful contribution into a major open source project.', glyph:'🔧', img:null, cat:'Engineering', achieved:false, xp:90,  tier:1},
+  {id:13, name:'Mechatronics',    desc:'Deep expertise in mechatronic system design.',                      glyph:'⚙️', img:null, cat:'Robotics',    achieved:false, xp:160, tier:2},
+  {id:14, name:'Grad admit',      desc:'Gain admission to a top-tier robotics or CS grad program.',         glyph:'🏛️', img:null, cat:'Milestone',   achieved:false, xp:380, tier:4},
+];
+
+/* ════════════════════════════════════════════
+   MODE DETECTION
+════════════════════════════════════════════ */
+const params        = new URLSearchParams(window.location.search);
+const urlGistId     = params.get('id');
+const isOwnerView   = !urlGistId;
+
+let ACTIVE_GIST_ID  = isOwnerView ? OWNER_GIST_ID : urlGistId;
+let ACTIVE_TOKEN    = isOwnerView ? OWNER_TOKEN    : (localStorage.getItem(`pocketful_token_${urlGistId}`) || '');
+let ACTIVE_USERNAME = isOwnerView ? OWNER_USERNAME : (localStorage.getItem(`pocketful_username_${urlGistId}`) || '');
+
+if (!isOwnerView) {
+  const tag = document.getElementById('visitor-tag');
+  tag.style.display = 'block';
+  tag.textContent = ACTIVE_USERNAME ? `${ACTIVE_USERNAME}'s pocketful` : 'visiting a pocketful';
+}
+
+/* ════════════════════════════════════════════
+   STATE
+════════════════════════════════════════════ */
+let SKILLS      = [];
+let nextId      = 1;
+let isAdmin     = false;
+let detailId    = null;
+let deleteId    = null;
+
+let selectedEmoji  = '🚀';
+let selectedStatus = 'achieved';
+let iconMode       = 'emoji';
+let uploadedImg    = null;
+let urlImg         = null;
+let currentIconTab = 'emoji';
+
+/* ════════════════════════════════════════════
+   PIXI.JS SETUP
+════════════════════════════════════════════ */
+const wrap    = document.getElementById('canvas-wrap');
+const lblLayer = document.getElementById('label-layer');
+
+const app = new PIXI.Application({
+  resizeTo: wrap,
+  backgroundAlpha: 0,
+  antialias: true,
+  resolution: window.devicePixelRatio || 1,
+  autoDensity: true,
+});
+app.view.id = 'pixi-canvas';
+app.view.style.zIndex = '1';
+wrap.appendChild(app.view);
+
+const orbContainer  = new PIXI.Container();
+const glowContainer = new PIXI.Container();
+app.stage.addChild(glowContainer);
+app.stage.addChild(orbContainer);
+
+const colorCache = {};
+
+/* ════════════════════════════════════════════
+   COLOR EXTRACTION
+════════════════════════════════════════════ */
+function extractColors(src, isEmoji, id, cb) {
+  if (colorCache[id]) { cb(colorCache[id]); return; }
+  const SZ = 48;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = SZ;
+  const ctx = cv.getContext('2d');
+
+  function process() {
+    let rS=0,gS=0,bS=0,n=0, bestSat=0, gR=180,gG=180,gB=180;
+    try {
+      const px = ctx.getImageData(0,0,SZ,SZ).data;
+      for (let i=0;i<px.length;i+=4) {
+        if (px[i+3]<30) continue;
+        const r=px[i],g=px[i+1],b=px[i+2];
+        rS+=r; gS+=g; bS+=b; n++;
+        const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+        const sat=mx===0?0:(mx-mn)/mx, score=sat*(mx/255);
+        if (score>bestSat){bestSat=score;gR=r;gG=g;gB=b;}
+      }
+    } catch(e){ cb(null); return; }
+    if (!n){ cb(null); return; }
+    const d=0.36;
+    const bg = hexN(Math.round(rS/n*d), Math.round(gS/n*d), Math.round(bS/n*d));
+    const glow = hexN(gR,gG,gB);
+    colorCache[id] = {bg, glow};
+    cb(colorCache[id]);
+  }
+
+  if (isEmoji) {
+    ctx.clearRect(0,0,SZ,SZ);
+    ctx.font = `${SZ*0.78}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(src, SZ/2, SZ/2);
+    process();
+  } else {
+    const img = new Image(); img.crossOrigin='anonymous';
+    img.onload = ()=>{ ctx.drawImage(img,0,0,SZ,SZ); process(); };
+    img.onerror = ()=>cb(null);
+    img.src = src;
+  }
+}
+
+function hexN(r,g,b){
+  return '#'+[r,g,b].map(v=>Math.min(255,Math.max(0,v)).toString(16).padStart(2,'0')).join('');
+}
+function hexToNum(hex){
+  return parseInt(hex.replace('#',''),16);
+}
+
+/* ════════════════════════════════════════════
+   DOT HELPERS
+════════════════════════════════════════════ */
+function dotRadius(r){ return Math.min(10, Math.max(4, r*0.12)); }
+
+function dotOffset(r, id, cx, cy, W, H){
+  const seeded = ((id*2654435761)>>>0)/4294967296;
+  const base   = seeded * Math.PI * 2;
+  const toC    = Math.atan2(H/2-cy, W/2-cx);
+  const blend  = 0.55;
+  const angle  = Math.atan2(
+    Math.sin(base)*(1-blend)+Math.sin(toC)*blend,
+    Math.cos(base)*(1-blend)+Math.cos(toC)*blend
+  );
+  const dr=dotRadius(r);
+  return {
+    x: cx + Math.cos(angle)*r,
+    y: cy + Math.sin(angle)*r,
+    r: dr
+  };
+}
+
+/* ════════════════════════════════════════════
+   D3 FORCE SIMULATION
+════════════════════════════════════════════ */
+let simulation  = null;
+let simNodes    = [];
+
+function computeRadius(s, W, H){
+  const area      = W * H;
+  const totalSq   = SKILLS.reduce((a,x)=>a+TIER_SCALE[x.tier]**2, 0);
+  const unit      = Math.sqrt(area * 0.88 / (totalSq * Math.PI));
+  return Math.max(22, Math.round(unit * TIER_SCALE[s.tier]));
+}
+
+function buildSimulation(W, H) {
+  const radii = {};
+  SKILLS.forEach(s => { radii[s.id] = computeRadius(s, W, H); });
+
+  /* preserve existing positions if we are just updating */
+  const prevPos = {};
+  simNodes.forEach(n => { prevPos[n.id] = {x:n.x, y:n.y}; });
+
+  simNodes = SKILLS.map(s => {
+    const r = radii[s.id];
+    const p = prevPos[s.id];
+    return {
+      id: s.id,
+      r,
+      achieved: s.achieved,
+      x: p ? p.x : W/2 + (Math.random()-0.5)*80,
+      y: p ? p.y : H/2 + (Math.random()-0.5)*80,
+    };
+  });
+
+  if (simulation) simulation.stop();
+
+  simulation = d3.forceSimulation(simNodes)
+    .force('charge', d3.forceManyBody().strength(6))
+    .force('center', d3.forceCenter(W/2, H/2).strength(0.04))
+    .force('collide', d3.forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4))
+    .force('bound', () => {
+      simNodes.forEach(n => {
+        const dr = dotRadius(n.r) + 4;
+        n.x = Math.max(n.r+dr, Math.min(W-n.r-dr, n.x));
+        n.y = Math.max(n.r+dr, Math.min(H-n.r-dr, n.y));
+      });
+    })
+    .alphaDecay(0.025)
+    .on('tick', renderFrame);
+
+  return simulation;
+}
+
+/* ════════════════════════════════════════════
+   PIXI RENDER FRAME (called every simulation tick)
+════════════════════════════════════════════ */
+const pixiOrbs  = {};  /* id -> {circle, glow, dot} */
+const domLabels = {};  /* id -> {label, hit} */
+const W = () => wrap.offsetWidth;
+const H = () => wrap.offsetHeight;
+
+function renderFrame() {
+  const w = W(), h = H();
+  simNodes.forEach(node => {
+    const s = SKILLS.find(x=>x.id===node.id);
+    if (!s) return;
+    const {x, y, r} = node;
+
+    /* ── Pixi objects ── */
+    if (!pixiOrbs[s.id]) createPixiOrb(s, node);
+    updatePixiOrb(s, node, w, h);
+
+    /* ── DOM label ── */
+    if (!domLabels[s.id]) createDomLabel(s, node);
+    updateDomLabel(s, node);
+  });
+
+  /* remove stale */
+  Object.keys(pixiOrbs).forEach(id => {
+    if (!SKILLS.find(s=>s.id===+id)) destroyOrb(+id);
+  });
+}
+
+function createPixiOrb(s, node) {
+  const circle = new PIXI.Graphics();
+  const glow   = new PIXI.Graphics();
+  const dot    = new PIXI.Graphics();
+  orbContainer.addChild(circle);
+  orbContainer.addChild(dot);
+  glowContainer.addChild(glow);
+  pixiOrbs[s.id] = {circle, glow, dot};
+}
+
+function updatePixiOrb(s, node, w, h) {
+  const {circle, glow, dot} = pixiOrbs[s.id];
+  const {x, y, r} = node;
+  const fallback = hexToNum(ORB_BG_FALLBACK[s.cat] || '#1a1a2e');
+
+  /* main circle */
+  circle.clear();
+  const bgColor = colorCache[s.id]?.bg ? hexToNum(colorCache[s.id].bg) : fallback;
+  if (s.achieved) {
+    circle.beginFill(bgColor, 1);
+    circle.drawCircle(x, y, r);
+    circle.endFill();
+  } else {
+    /* pending: transparent with dashed border — draw as thin ring */
+    circle.lineStyle(1.5, 0xffffff, 0.22);
+    /* dashed circle via segments */
+    const segs = Math.max(12, Math.round(r*1.2));
+    for (let i=0;i<segs;i+=2) {
+      const a1=(i/segs)*Math.PI*2, a2=((i+0.8)/segs)*Math.PI*2;
+      circle.arc(x, y, r, a1, a2);
+      circle.closePath();
+    }
+  }
+
+  /* glow ring for achieved */
+  glow.clear();
+  if (s.achieved) {
+    const glowColor = colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x1D9E75;
+    glow.lineStyle(2.5, glowColor, 0.65);
+    glow.drawCircle(x, y, r+1.5);
+    /* soft outer glow */
+    for (let i=1;i<=3;i++) {
+      glow.lineStyle(i*2, glowColor, 0.08/i);
+      glow.drawCircle(x, y, r+i*3);
+    }
+  }
+
+  /* status dot */
+  dot.clear();
+  const dOff   = dotOffset(r, s.id, x, y, w, h);
+  const dotClr = s.achieved
+    ? (colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x1D9E75)
+    : 0x7F77DD;
+  const dotAlpha = s.achieved ? 1 : 0.7;
+  dot.beginFill(dotClr, dotAlpha);
+  dot.drawCircle(dOff.x, dOff.y, dOff.r);
+  dot.endFill();
+
+  /* async color extraction */
+  const src = s.img || s.glyph;
+  extractColors(src, !s.img, s.id, () => {
+    /* re-draw with correct colors on next tick — simulation handles it */
+    if (simulation) simulation.alpha(0.1).restart();
+  });
+}
+
+function createDomLabel(s, node) {
+  const lbl = document.createElement('div');
+  lbl.className = 'orb-label';
+  lbl.dataset.id = s.id;
+
+  const hit = document.createElement('div');
+  hit.className = 'orb-hit';
+  hit.dataset.id = s.id;
+  hit.addEventListener('click', () => openDetail(s.id));
+
+  lblLayer.appendChild(lbl);
+  lblLayer.appendChild(hit);
+  domLabels[s.id] = {lbl, hit};
+}
+
+function updateDomLabel(s, node) {
+  const {lbl, hit} = domLabels[s.id];
+  const {x, y, r} = node;
+  const showName  = r >= 24;
+  const emojiFs   = Math.round(r * 0.50);
+  const nameFs    = Math.max(7, Math.round(r * 0.17));
+  const textW     = Math.round(r * 1.32);
+  const showEmoji = !s.img;
+
+  lbl.style.left = x+'px';
+  lbl.style.top  = y+'px';
+  lbl.style.width = (r*2)+'px';
+
+  lbl.innerHTML = showEmoji
+    ? `<span class="orb-emoji" style="font-size:${emojiFs}px">${s.glyph}</span>`
+    + (showName ? `<span class="orb-name" style="font-size:${nameFs}px;width:${textW}px;margin-top:${Math.round(r*0.04)}px">${s.name}</span>` : '')
+    : (showName ? `<span class="orb-name" style="font-size:${nameFs}px;width:${textW}px">${s.name}</span>` : '');
+
+  if (s.img) {
+    lbl.style.backgroundImage = `url(${s.img})`;
+    lbl.style.backgroundSize  = 'cover';
+    lbl.style.backgroundPosition = 'center';
+    lbl.style.borderRadius    = '50%';
+    lbl.style.width  = (r*2)+'px';
+    lbl.style.height = (r*2)+'px';
+    lbl.style.transform = 'translate(-50%,-50%)';
+  } else {
+    lbl.style.backgroundImage = '';
+    lbl.style.borderRadius    = '';
+    lbl.style.height = '';
+  }
+
+  hit.style.left   = x+'px';
+  hit.style.top    = y+'px';
+  hit.style.width  = (r*2)+'px';
+  hit.style.height = (r*2)+'px';
+  hit.style.pointerEvents = 'all';
+}
+
+function destroyOrb(id) {
+  if (pixiOrbs[id]) {
+    pixiOrbs[id].circle.destroy();
+    pixiOrbs[id].glow.destroy();
+    pixiOrbs[id].dot.destroy();
+    delete pixiOrbs[id];
+  }
+  if (domLabels[id]) {
+    domLabels[id].lbl.remove();
+    domLabels[id].hit.remove();
+    delete domLabels[id];
+  }
+}
+
+/* ════════════════════════════════════════════
+   INIT / RESIZE
+════════════════════════════════════════════ */
+function initCanvas() {
+  const w = W(), h = H();
+  if (!w || !h) return;
+  buildSimulation(w, h);
+}
+
+const ro = new ResizeObserver(() => {
+  app.resize();
+  initCanvas();
+});
+ro.observe(wrap);
+
+/* ════════════════════════════════════════════
+   XP
+════════════════════════════════════════════ */
+function updateXP() {
+  const total  = SKILLS.reduce((a,s)=>a+s.xp, 0);
+  const earned = SKILLS.filter(s=>s.achieved).reduce((a,s)=>a+s.xp, 0);
+  const pct    = total ? Math.round((earned/total)*100) : 0;
+  document.getElementById('xp-lbl').textContent = earned+' XP';
+  document.getElementById('xp-pct').textContent = pct+'%';
+  setTimeout(()=>{ document.getElementById('xp-fill').style.width=pct+'%'; }, 80);
+}
+
+/* ════════════════════════════════════════════
+   GIST SYNC
+════════════════════════════════════════════ */
+function showSyncStatus(msg, isError) {
+  const el = document.getElementById('sync-status');
+  el.textContent = msg;
+  el.style.background = isError ? 'rgba(180,40,40,0.18)' : 'rgba(29,158,117,0.15)';
+  el.style.color  = isError ? 'rgba(220,80,80,0.85)' : 'rgba(29,158,117,0.8)';
+  el.style.border = `0.5px solid ${isError?'rgba(220,80,80,0.25)':'rgba(29,158,117,0.25)'}`;
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ el.style.opacity='0'; }, 2500);
+}
+
+async function loadFromGist() {
+  try {
+    const meta = await fetch(`https://api.github.com/gists/${ACTIVE_GIST_ID}`, {
+      headers: { 'Authorization': `token ${ACTIVE_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!meta.ok) throw new Error(meta.status);
+    const gist = await meta.json();
+    const rawUrl = gist.files[GIST_FILE]?.raw_url;
+    if (!rawUrl) throw new Error('file missing');
+    const raw = await fetch(rawUrl);
+    if (!raw.ok) throw new Error('raw failed');
+    const data = JSON.parse(await raw.text());
+    if (Array.isArray(data) && data.length > 0) {
+      SKILLS = data; nextId = Math.max(...SKILLS.map(s=>s.id))+1;
+    } else {
+      SKILLS = isOwnerView ? DEFAULT_SKILLS : []; nextId = isOwnerView ? 15 : 1;
+      if (isOwnerView) await saveToGist();
+    }
+  } catch(e) {
+    try {
+      const raw = await fetch(`https://gist.githubusercontent.com/${ACTIVE_USERNAME}/${ACTIVE_GIST_ID}/raw/${GIST_FILE}`);
+      if (!raw.ok) throw new Error();
+      const data = JSON.parse(await raw.text());
+      if (Array.isArray(data) && data.length > 0) {
+        SKILLS = data; nextId = Math.max(...SKILLS.map(s=>s.id))+1; return;
+      }
+    } catch(e2) {}
+    SKILLS = isOwnerView ? DEFAULT_SKILLS : []; nextId = isOwnerView ? 15 : 1;
+    showSyncStatus("offline — changes won't sync", true);
+  }
+}
+
+async function saveToGist() {
+  try {
+    const res = await fetch(`https://api.github.com/gists/${ACTIVE_GIST_ID}`, {
+      method:'PATCH',
+      headers:{'Authorization':`token ${ACTIVE_TOKEN}`,'Content-Type':'application/json'},
+      body: JSON.stringify({files:{[GIST_FILE]:{content:JSON.stringify(SKILLS,null,2)}}})
+    });
+    if (!res.ok) throw new Error(res.status);
+    showSyncStatus('saved ✓', false);
+  } catch(e) { showSyncStatus('sync failed', true); }
+}
+
+function refreshCanvas() {
+  /* nudge simulation to re-settle with new data */
+  const w=W(), h=H();
+  buildSimulation(w, h);
+  updateXP();
+}
+
+/* ════════════════════════════════════════════
+   SECRET KNOCK
+════════════════════════════════════════════ */
+let knockCount=0, knockTimer=null;
+const secretZone = document.createElement('div');
+secretZone.style.cssText = 'position:absolute;bottom:0;left:0;width:44px;height:44px;z-index:50;cursor:default;';
+wrap.appendChild(secretZone);
+secretZone.addEventListener('click', ()=>{
+  knockCount++;
+  const dot = document.getElementById('kd'+(knockCount-1));
+  if (dot) { dot.classList.add('lit'); setTimeout(()=>dot.classList.remove('lit'),600); }
+  clearTimeout(knockTimer);
+  if (knockCount >= 3) {
+    knockCount=0;
+    openModal('pw-overlay');
+    setTimeout(()=>document.getElementById('pw-input').focus(),100);
+  } else { knockTimer=setTimeout(()=>{ knockCount=0; },2000); }
+});
+
+function checkPw() {
+  const val = document.getElementById('pw-input').value;
+  if (val===ADMIN_PASSWORD || (ACTIVE_TOKEN && val===ACTIVE_TOKEN.slice(-8))) {
+    closeModal('pw-overlay');
+    document.getElementById('pw-input').value='';
+    document.getElementById('pw-error').textContent='';
+    isAdmin=true; document.body.classList.add('admin-mode');
+  } else {
+    document.getElementById('pw-error').textContent='incorrect passphrase';
+    document.getElementById('pw-input').value='';
+    document.getElementById('pw-input').focus();
+  }
+}
+document.getElementById('pw-input').addEventListener('keydown',e=>{if(e.key==='Enter')checkPw();});
+
+function exitAdmin() {
+  isAdmin=false; document.body.classList.remove('admin-mode');
+}
+
+/* ════════════════════════════════════════════
+   DETAIL MODAL
+════════════════════════════════════════════ */
+function openDetail(id) {
+  const s = SKILLS.find(x=>x.id===+id); if (!s) return;
+  detailId = s.id;
+  const wrap2 = document.getElementById('m-icon-wrap');
+  wrap2.innerHTML = s.img
+    ? `<img class="modal-img-preview" src="${s.img}" alt="">`
+    : `<div class="modal-emoji">${s.glyph}</div>`;
+  document.getElementById('m-name').textContent = s.name;
+  document.getElementById('m-desc').textContent = s.desc||s.name;
+  document.getElementById('m-pills').innerHTML =
+    `<span class="pill">Tier ${s.tier}</span>
+     <span class="pill">+${s.xp} XP</span>
+     <span class="pill ${s.achieved?'achieved':'pending-pill'}">${s.achieved?'✦ Achieved':'◌ In progress'}</span>`;
+  document.getElementById('m-toggle-btn').textContent = s.achieved ? 'mark in progress' : 'mark achieved';
+  openModal('detail-overlay');
+}
+
+function adminEditFromDetail()   { if (detailId) { closeModal('detail-overlay'); openEditModal(detailId); } }
+function adminDeleteFromDetail() { if (detailId) { closeModal('detail-overlay'); openDeleteConfirm(detailId); } }
+function adminToggleFromDetail() {
+  if (!detailId) return;
+  toggleAchieved(detailId);
+  const s=SKILLS.find(x=>x.id===detailId); if(!s) return;
+  document.getElementById('m-toggle-btn').textContent = s.achieved?'mark in progress':'mark achieved';
+  document.getElementById('m-pills').innerHTML =
+    `<span class="pill">Tier ${s.tier}</span>
+     <span class="pill">+${s.xp} XP</span>
+     <span class="pill ${s.achieved?'achieved':'pending-pill'}">${s.achieved?'✦ Achieved':'◌ In progress'}</span>`;
+}
+
+/* ════════════════════════════════════════════
+   ADD / EDIT
+════════════════════════════════════════════ */
+function resetForm() {
+  document.getElementById('f-name').value='';
+  document.getElementById('f-desc').value='';
+  document.getElementById('f-tier').value='3';
+  document.getElementById('f-edit-id').value='';
+  document.getElementById('f-img-file').value='';
+  document.getElementById('f-img-url').value='';
+  document.getElementById('upload-preview').classList.remove('show');
+  document.getElementById('url-preview').classList.remove('show');
+  uploadedImg=null; urlImg=null; selectedEmoji='🚀'; selectedStatus='achieved'; iconMode='emoji';
+  switchIconTab('emoji', document.querySelector('.itab'));
+  buildEmojiGrid(); selectStatus('achieved');
+}
+
+function openAddModal() {
+  document.getElementById('form-title').textContent='New something';
+  resetForm(); openModal('add-overlay');
+}
+
+function openEditModal(id) {
+  const s=SKILLS.find(x=>x.id===id); if (!s) return;
+  document.getElementById('form-title').textContent='Edit';
+  document.getElementById('f-edit-id').value=id;
+  document.getElementById('f-name').value=s.name;
+  document.getElementById('f-desc').value=s.desc||'';
+  document.getElementById('f-tier').value=s.tier;
+  selectedStatus=s.achieved?'achieved':'pending';
+  selectStatus(selectedStatus);
+  if (s.img) {
+    if (s.img.startsWith('data:')) {
+      uploadedImg=s.img;
+      const p=document.getElementById('upload-preview'); p.src=s.img; p.classList.add('show');
+      switchIconTab('upload',document.querySelectorAll('.itab')[1]);
+    } else {
+      urlImg=s.img;
+      const p=document.getElementById('url-preview'); p.src=s.img; p.classList.add('show');
+      switchIconTab('url',document.querySelectorAll('.itab')[2]);
+    }
+  } else { selectedEmoji=s.glyph; switchIconTab('emoji',document.querySelectorAll('.itab')[0]); buildEmojiGrid(); }
+  openModal('add-overlay');
+}
+
+function saveSkill() {
+  const name=document.getElementById('f-name').value.trim();
+  if (!name){ document.getElementById('f-name').focus(); return; }
+  const tier=parseInt(document.getElementById('f-tier').value);
+  const achieved=selectedStatus==='achieved';
+  const img = iconMode==='upload'&&uploadedImg ? uploadedImg : iconMode==='url'&&urlImg ? urlImg : null;
+  const editId=document.getElementById('f-edit-id').value;
+  if (editId) {
+    const s=SKILLS.find(x=>x.id===+editId);
+    if (s){ s.name=name; s.desc=document.getElementById('f-desc').value.trim()||name; s.tier=tier; s.achieved=achieved; s.xp=tier*80; s.img=img; if(!img)s.glyph=selectedEmoji; delete colorCache[s.id]; }
+  } else {
+    SKILLS.push({id:nextId++,name,desc:document.getElementById('f-desc').value.trim()||name,glyph:selectedEmoji,img,cat:'Other',achieved,xp:tier*80,tier});
+  }
+  closeModal('add-overlay'); refreshCanvas(); saveToGist();
+}
+
+/* ════════════════════════════════════════════
+   DELETE
+════════════════════════════════════════════ */
+function openDeleteConfirm(id) {
+  deleteId=id;
+  const s=SKILLS.find(x=>x.id===id);
+  document.getElementById('del-name').textContent=`"${s?s.name:'this'}"`;
+  openModal('del-overlay');
+}
+function confirmDelete() {
+  if (deleteId!==null){ destroyOrb(deleteId); SKILLS=SKILLS.filter(x=>x.id!==deleteId); deleteId=null; }
+  closeModal('del-overlay'); refreshCanvas(); saveToGist();
+}
+
+function toggleAchieved(id) {
+  const s=SKILLS.find(x=>x.id===id);
+  if (s){ s.achieved=!s.achieved; refreshCanvas(); saveToGist(); }
+}
+
+/* ════════════════════════════════════════════
+   ICON FORM HELPERS
+════════════════════════════════════════════ */
+function switchIconTab(mode, btn) {
+  currentIconTab=mode; iconMode=mode;
+  document.querySelectorAll('.itab').forEach(b=>b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.icon-panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('ip-'+mode).classList.add('active');
+}
+function buildEmojiGrid() {
+  document.getElementById('emoji-grid').innerHTML=EMOJIS.map(e=>
+    `<button class="ep-btn${e===selectedEmoji?' selected':''}" onclick="pickEmoji('${e}')">${e}</button>`
+  ).join('');
+}
+function pickEmoji(e){ selectedEmoji=e; iconMode='emoji'; buildEmojiGrid(); }
+function handleFileUpload(input) {
+  const file=input.files[0]; if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    uploadedImg=ev.target.result; iconMode='upload';
+    const p=document.getElementById('upload-preview'); p.src=uploadedImg; p.classList.add('show');
+  };
+  reader.readAsDataURL(file);
+}
+function handleUrlInput(input) {
+  urlImg=input.value.trim(); iconMode='url';
+  const p=document.getElementById('url-preview');
+  if(urlImg){p.src=urlImg;p.classList.add('show');}else p.classList.remove('show');
+}
+function selectStatus(v) {
+  selectedStatus=v;
+  document.getElementById('sb-achieved').className='status-btn'+(v==='achieved'?' sel-achieved':'');
+  document.getElementById('sb-pending').className='status-btn'+(v==='pending'?' sel-pending':'');
+}
+
+/* ════════════════════════════════════════════
+   ONBOARDING
+════════════════════════════════════════════ */
+let obStep=0, obGistId='', obToken='', obUsername='';
+const OB_STEPS=[
+  { title:'Create your Gist',
+    sub:`Go to <a href="https://gist.github.com" target="_blank">gist.github.com</a> and create a new <strong>secret gist</strong>.<br><br>Set the filename to <code>pocketful.json</code> and the content to <code>[]</code><br><br>Once created, copy the <strong>Gist ID</strong> from the URL and paste it below.`,
+    placeholder:'Gist ID (long string in the URL)', type:'text' },
+  { title:'Create a GitHub token',
+    sub:`Go to <a href="https://github.com/settings/tokens" target="_blank">GitHub → Settings → Developer settings → Personal access tokens (classic)</a>.<br><br>Generate a new token, tick only the <strong>gist</strong> scope, and paste it below.<br><br><em style="font-size:11px;color:rgba(255,255,255,0.2)">Stored only in your browser's localStorage — never sent to us.</em>`,
+    placeholder:'ghp_...', type:'password' },
+  { title:'Your GitHub username',
+    sub:`Enter your GitHub username so we can build your shareable URL correctly.`,
+    placeholder:'yourusername', type:'text' }
+];
+
+function openOnboarding() { obStep=0; obGistId=''; obToken=''; obUsername=''; renderObStep(); openModal('onboard-overlay'); }
+function renderObStep() {
+  const s=OB_STEPS[obStep];
+  document.getElementById('onboard-error').textContent='';
+  ['os0','os1','os2'].forEach((id,i)=>{
+    document.getElementById(id).className='ostep'+(i<obStep?' done':i===obStep?' active':'');
+  });
+  document.getElementById('onboard-content').innerHTML=`
+    <div class="onboard-title">${s.title}</div>
+    <div class="onboard-sub">${s.sub}</div>
+    <div class="field"><input type="${s.type}" id="ob-input" placeholder="${s.placeholder}" style="width:100%" onkeydown="if(event.key==='Enter')obNext()"></div>
+  `;
+  document.getElementById('onboard-actions').innerHTML=`
+    ${obStep>0?'<button class="btn" onclick="obBack()">back</button>':'<button class="btn" onclick="closeModal(\'onboard-overlay\')">cancel</button>'}
+    <button class="btn primary" onclick="obNext()">${obStep<2?'next →':'connect'}</button>
+  `;
+  setTimeout(()=>document.getElementById('ob-input')?.focus(),80);
+}
+function obBack(){ obStep=Math.max(0,obStep-1); renderObStep(); }
+async function obNext() {
+  const val=document.getElementById('ob-input')?.value.trim();
+  const err=document.getElementById('onboard-error');
+  if (!val){ err.textContent='this field is required'; return; }
+  if (obStep===0) obGistId=val;
+  else if (obStep===1) obToken=val;
+  else { obUsername=val; await obFinish(); return; }
+  obStep++; renderObStep();
+}
+async function obFinish() {
+  const err=document.getElementById('onboard-error');
+  const act=document.getElementById('onboard-actions');
+  act.innerHTML='<span style="font-family:DM Mono,monospace;font-size:11px;color:var(--muted)">connecting...</span>';
+  err.textContent='';
+  try {
+    const res=await fetch(`https://api.github.com/gists/${obGistId}`,{headers:{'Authorization':`token ${obToken}`}});
+    if (!res.ok) throw new Error(res.status===401?'invalid token':res.status===404?'gist not found':`error ${res.status}`);
+    const gist=await res.json();
+    if (!gist.files[GIST_FILE]) {
+      await fetch(`https://api.github.com/gists/${obGistId}`,{method:'PATCH',headers:{'Authorization':`token ${obToken}`,'Content-Type':'application/json'},body:JSON.stringify({files:{[GIST_FILE]:{content:'[]'}}})});
+    }
+    localStorage.setItem(`pocketful_token_${obGistId}`,obToken);
+    localStorage.setItem(`pocketful_username_${obGistId}`,obUsername);
+    const url=`${location.origin}${location.pathname}?id=${obGistId}`;
+    document.getElementById('onboard-content').innerHTML=`
+      <div class="onboard-success">
+        <div class="onboard-success-icon">🎉</div>
+        <div class="onboard-success-title">your pocketful is ready</div>
+        <div class="onboard-success-sub">Bookmark this link — it's yours. Share it with anyone.</div>
+        <div class="copy-url-wrap">
+          <input class="copy-url-input" value="${url}" readonly>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText('${url}').then(()=>{this.textContent='copied!';setTimeout(()=>this.textContent='copy',2000)})">copy</button>
+        </div>
+      </div>`;
+    act.innerHTML=`<button class="btn primary" onclick="location.href='${url}'">open my pocketful →</button>`;
+    ['os0','os1','os2'].forEach(id=>document.getElementById(id).className='ostep done');
+  } catch(e) {
+    err.textContent='could not connect: '+e.message;
+    act.innerHTML='<button class="btn" onclick="obBack()">back</button><button class="btn primary" onclick="obNext()">retry</button>';
+  }
+}
+
+/* ════════════════════════════════════════════
+   MODAL UTILS
+════════════════════════════════════════════ */
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.overlay').forEach(o=>{
+  o.addEventListener('click',e=>{ if(e.target===o) o.classList.remove('open'); });
+});
+
+/* ════════════════════════════════════════════
+   BOOT
+════════════════════════════════════════════ */
+buildEmojiGrid();
+loadFromGist().then(()=>{
+  updateXP();
+  initCanvas();
+});
+</script>
+</body>
+</html>
