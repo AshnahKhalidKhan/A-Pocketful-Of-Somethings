@@ -91,18 +91,23 @@ body.admin-mode #add-btn { display: block; }
   position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2;
 }
 .orb-label {
+  --r: 0px;
   position: absolute; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   pointer-events: none; text-align: center;
   transition: opacity 0.3s;
 }
-.orb-emoji { line-height: 1; display: block; }
+.orb-emoji { line-height: 1; display: block; font-size: calc(var(--r) * 0.5); }
 .orb-name {
   font-family: 'Syne', sans-serif; font-weight: 600;
   color: rgba(255,255,255,0.92); line-height: 1.2;
   text-align: center; word-break: break-word;
   text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  font-size: max(7px, calc(var(--r) * 0.17));
+  width: calc(var(--r) * 1.32);
+  margin-top: calc(var(--r) * 0.04);
 }
+.orb-img { display: block; flex-shrink: 0; max-width: var(--r); max-height: var(--r); width: auto; height: auto; }
 /* clickable hit areas (invisible, sit on top) */
 .orb-hit {
   position: absolute; border-radius: 50%; cursor: pointer;
@@ -143,7 +148,7 @@ body.admin-mode #add-btn { display: block; }
 }
 .modal-close:hover { color: var(--text); }
 .modal-emoji { font-size: 48px; text-align: center; margin-bottom: 12px; }
-.modal-img-preview { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; display: block; margin: 0 auto 12px; }
+.modal-img-preview { max-width: 72px; max-height: 72px; width: auto; height: auto; display: block; margin: 0 auto 12px; object-fit: contain; }
 .modal-name { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; margin-bottom: 6px; }
 .modal-desc { font-size: 13px; color: var(--muted); line-height: 1.65; text-align: center; margin-bottom: 14px; }
 .modal-pills { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
@@ -182,6 +187,16 @@ body.admin-mode .modal-admin-actions { display: flex; }
   background: transparent; cursor: pointer; padding: 3px; text-align: center; transition: background 0.12s;
 }
 .ep-btn:hover, .ep-btn.selected { background: rgba(127,119,221,0.25); border-color: var(--accent); }
+.ep-btn img { width: 19px; height: 19px; display: block; pointer-events: none; }
+.icon-search {
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--border); border-radius: 8px;
+  color: var(--text); font-family: 'Syne', sans-serif; font-size: 13px;
+  padding: 7px 10px; outline: none; margin-bottom: 8px; display: block;
+  transition: border-color 0.15s;
+}
+.icon-search:focus { border-color: rgba(127,119,221,0.5); }
+.icon-search::placeholder { color: var(--muted); }
 .icon-preview-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .icon-preview { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 0.5px solid var(--border); display: none; }
 .icon-preview.show { display: block; }
@@ -340,16 +355,17 @@ body.admin-mode .modal-admin-actions { display: flex; }
     <div class="field">
       <label>Icon</label>
       <div class="icon-tabs">
-        <button class="itab active" onclick="switchIconTab('emoji',this)">emoji</button>
+        <button class="itab active" onclick="switchIconTab('emoji',this)">icons</button>
         <button class="itab" onclick="switchIconTab('upload',this)">upload</button>
         <button class="itab" onclick="switchIconTab('url',this)">link</button>
       </div>
       <div class="icon-panel active" id="ip-emoji">
+        <input type="text" class="icon-search" id="icon-search" placeholder="search 200k+ icons…" oninput="searchIcons(this.value)">
         <div class="emoji-grid" id="emoji-grid"></div>
       </div>
       <div class="icon-panel" id="ip-upload">
         <div class="icon-preview-wrap">
-          <input type="file" id="f-img-file" accept="image/*" onchange="handleFileUpload(this)">
+          <input type="file" id="f-img-file" accept="image/*,.svg" onchange="handleFileUpload(this)">
           <img id="upload-preview" class="icon-preview" src="" alt="">
         </div>
       </div>
@@ -512,15 +528,15 @@ function extractColors(src, isEmoji, id, cb) {
         if (px[i+3]<30) continue;
         const r=px[i],g=px[i+1],b=px[i+2];
         rS+=r; gS+=g; bS+=b; n++;
-        const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
         const sat=mx===0?0:(mx-mn)/mx, score=sat*(mx/255);
-        if (score>bestSat){bestSat=score;gR=r;gG=g;gB=b;}
+        if (score>bestSat){ bestSat=score; gR=r; gG=g; gB=b; }
       }
     } catch(e){ cb(null); return; }
     if (!n){ cb(null); return; }
-    const d=0.36;
-    const bg = hexN(Math.round(rS/n*d), Math.round(gS/n*d), Math.round(bS/n*d));
-    const glow = hexN(gR,gG,gB);
+    const d=0.25;
+    const bg   = hexN(Math.round(rS/n*d), Math.round(gS/n*d), Math.round(bS/n*d));
+    const glow = hexN(gR, gG, gB);
     colorCache[id] = {bg, glow};
     cb(colorCache[id]);
   }
@@ -532,10 +548,19 @@ function extractColors(src, isEmoji, id, cb) {
     ctx.fillText(src, SZ/2, SZ/2);
     process();
   } else {
-    const img = new Image(); img.crossOrigin='anonymous';
-    img.onload = ()=>{ ctx.drawImage(img,0,0,SZ,SZ); process(); };
-    img.onerror = ()=>cb(null);
-    img.src = src;
+    const loadImg = (imgSrc, onFail) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { ctx.clearRect(0,0,SZ,SZ); ctx.drawImage(img,0,0,SZ,SZ); process(); };
+      img.onerror = () => onFail ? onFail() : cb(null);
+      img.src = imgSrc;
+    };
+    if (src.startsWith('data:')) {
+      loadImg(src, null);
+    } else {
+      /* try direct first; if CORS blocks it, retry via proxy that adds CORS headers */
+      loadImg(src, () => loadImg(`https://corsproxy.io/?${encodeURIComponent(src)}`, null));
+    }
   }
 }
 
@@ -592,12 +617,15 @@ function buildSimulation(W, H) {
   simNodes = SKILLS.map(s => {
     const r = radii[s.id];
     const p = prevPos[s.id];
+    const edge = s.achieved ? r + 9 : r + 1;
+    const ix = Math.max(edge, Math.min(W - edge, p ? p.x : W/2 + (Math.random()-0.5)*80));
+    const iy = Math.max(edge, Math.min(H - edge, p ? p.y : H/2 + (Math.random()-0.5)*80));
     return {
       id: s.id,
       r,
       achieved: s.achieved,
-      x: p ? p.x : W/2 + (Math.random()-0.5)*80,
-      y: p ? p.y : H/2 + (Math.random()-0.5)*80,
+      x: ix,
+      y: iy,
     };
   });
 
@@ -609,9 +637,9 @@ function buildSimulation(W, H) {
     .force('collide', d3.forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4))
     .force('bound', () => {
       simNodes.forEach(n => {
-        const dr = dotRadius(n.r) + 4;
-        n.x = Math.max(n.r+dr, Math.min(W-n.r-dr, n.x));
-        n.y = Math.max(n.r+dr, Math.min(H-n.r-dr, n.y));
+        const edge = n.achieved ? n.r + 9 : n.r + 1;
+        n.x = Math.max(edge, Math.min(W - edge, n.x));
+        n.y = Math.max(edge, Math.min(H - edge, n.y));
       });
     })
     .alphaDecay(0.025)
@@ -630,6 +658,11 @@ const H = () => wrap.offsetHeight;
 
 function renderFrame() {
   const w = W(), h = H();
+  simNodes.forEach(n => {
+    const edge = n.achieved ? n.r + 9 : n.r + 1;
+    n.x = Math.max(edge, Math.min(w - edge, n.x));
+    n.y = Math.max(edge, Math.min(h - edge, n.y));
+  });
   simNodes.forEach(node => {
     const s = SKILLS.find(x=>x.id===node.id);
     if (!s) return;
@@ -687,7 +720,7 @@ function updatePixiOrb(s, node, w, h) {
   /* glow ring for achieved */
   glow.clear();
   if (s.achieved) {
-    const glowColor = colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x1D9E75;
+    const glowColor = colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x7F77DD;
     glow.lineStyle(2.5, glowColor, 0.65);
     glow.drawCircle(x, y, r+1.5);
     /* soft outer glow */
@@ -701,7 +734,7 @@ function updatePixiOrb(s, node, w, h) {
   dot.clear();
   const dOff   = dotOffset(r, s.id, x, y, w, h);
   const dotClr = s.achieved
-    ? (colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x1D9E75)
+    ? (colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x7F77DD)
     : 0x7F77DD;
   const dotAlpha = s.achieved ? 1 : 0.7;
   dot.beginFill(dotClr, dotAlpha);
@@ -734,39 +767,50 @@ function createDomLabel(s, node) {
 function updateDomLabel(s, node) {
   const {lbl, hit} = domLabels[s.id];
   const {x, y, r} = node;
-  const showName  = r >= 24;
-  const emojiFs   = Math.round(r * 0.50);
-  const nameFs    = Math.max(7, Math.round(r * 0.17));
-  const textW     = Math.round(r * 1.32);
-  const showEmoji = !s.img;
+  const showName = r >= 24;
 
-  lbl.style.left = x+'px';
-  lbl.style.top  = y+'px';
-  lbl.style.width = (r*2)+'px';
-
-  lbl.innerHTML = showEmoji
-    ? `<span class="orb-emoji" style="font-size:${emojiFs}px">${s.glyph}</span>`
-    + (showName ? `<span class="orb-name" style="font-size:${nameFs}px;width:${textW}px;margin-top:${Math.round(r*0.04)}px">${s.name}</span>` : '')
-    : (showName ? `<span class="orb-name" style="font-size:${nameFs}px;width:${textW}px">${s.name}</span>` : '');
+  /* single CSS variable drives all size calc() rules in the stylesheet */
+  lbl.style.setProperty('--r', r + 'px');
+  lbl.style.left  = x + 'px';
+  lbl.style.top   = y + 'px';
+  lbl.style.width = (r * 2) + 'px';
 
   if (s.img) {
-    lbl.style.backgroundImage = `url(${s.img})`;
-    lbl.style.backgroundSize  = 'cover';
-    lbl.style.backgroundPosition = 'center';
-    lbl.style.borderRadius    = '50%';
-    lbl.style.width  = (r*2)+'px';
-    lbl.style.height = (r*2)+'px';
-    lbl.style.transform = 'translate(-50%,-50%)';
-  } else {
     lbl.style.backgroundImage = '';
     lbl.style.borderRadius    = '';
-    lbl.style.height = '';
+    lbl.style.height          = '';
+
+    /* Persist the <img> element across ticks — avoids re-decoding data: URLs every frame */
+    let imgEl = lbl.querySelector('img.orb-img');
+    if (!imgEl) {
+      lbl.innerHTML = '';
+      imgEl = document.createElement('img');
+      imgEl.className = 'orb-img';
+      imgEl.alt = '';
+      lbl.appendChild(imgEl);
+    }
+    if (imgEl.dataset.orbSrc !== s.img) { imgEl.dataset.orbSrc = s.img; imgEl.src = s.img; }
+
+    let nameEl = lbl.querySelector('.orb-name');
+    if (showName) {
+      if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'orb-name'; lbl.appendChild(nameEl); }
+      nameEl.textContent = s.name;
+    } else if (nameEl) { nameEl.remove(); }
+
+  } else {
+    /* Emoji path — clear any leftover img element from a previous image state */
+    if (lbl.querySelector('img.orb-img')) lbl.innerHTML = '';
+    lbl.style.backgroundImage = '';
+    lbl.style.borderRadius    = '';
+    lbl.style.height          = '';
+    lbl.innerHTML = `<span class="orb-emoji">${s.glyph}</span>`
+      + (showName ? `<span class="orb-name">${s.name}</span>` : '');
   }
 
-  hit.style.left   = x+'px';
-  hit.style.top    = y+'px';
-  hit.style.width  = (r*2)+'px';
-  hit.style.height = (r*2)+'px';
+  hit.style.left   = x + 'px';
+  hit.style.top    = y + 'px';
+  hit.style.width  = (r * 2) + 'px';
+  hit.style.height = (r * 2) + 'px';
   hit.style.pointerEvents = 'all';
 }
 
@@ -960,6 +1004,7 @@ function resetForm() {
   document.getElementById('upload-preview').classList.remove('show');
   document.getElementById('url-preview').classList.remove('show');
   uploadedImg=null; urlImg=null; selectedEmoji='🚀'; selectedStatus='achieved'; iconMode='emoji';
+  const _is = document.getElementById('icon-search'); if (_is) _is.value='';
   switchIconTab('emoji', document.querySelector('.itab'));
   buildEmojiGrid(); selectStatus('achieved');
 }
@@ -1043,6 +1088,39 @@ function buildEmojiGrid() {
   ).join('');
 }
 function pickEmoji(e){ selectedEmoji=e; iconMode='emoji'; buildEmojiGrid(); }
+
+let _iconSearchTimer = null;
+function searchIcons(query) {
+  clearTimeout(_iconSearchTimer);
+  if (!query.trim()) { buildEmojiGrid(); return; }
+  _iconSearchTimer = setTimeout(async () => {
+    const grid = document.getElementById('emoji-grid');
+    grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">searching…</div>';
+    try {
+      const res  = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(query.trim())}&limit=54`);
+      const data = await res.json();
+      if (!data.icons || !data.icons.length) {
+        grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">no results</div>';
+        return;
+      }
+      grid.innerHTML = data.icons.map(icon => {
+        const [prefix, name] = icon.split(':');
+        const url = `https://api.iconify.design/${prefix}/${name}.svg`;
+        const sel = urlImg === url ? ' selected' : '';
+        return `<button class="ep-btn${sel}" data-iconurl="${url}" title="${icon}" onclick="pickIconImg('${url}')" style="display:flex;align-items:center;justify-content:center;padding:4px;">` +
+          `<img src="${url}" alt="${name}"></button>`;
+      }).join('');
+    } catch(e) {
+      grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">failed to load — check connection</div>';
+    }
+  }, 350);
+}
+function pickIconImg(url) {
+  urlImg = url; iconMode = 'url';
+  document.querySelectorAll('#emoji-grid .ep-btn').forEach(b =>
+    b.classList.toggle('selected', b.dataset.iconurl === url)
+  );
+}
 function handleFileUpload(input) {
   const file=input.files[0]; if(!file)return;
   const reader=new FileReader();
