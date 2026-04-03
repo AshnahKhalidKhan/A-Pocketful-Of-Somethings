@@ -107,7 +107,7 @@ body.admin-mode #add-btn { display: block; }
   width: calc(var(--r) * 1.32);
   margin-top: calc(var(--r) * 0.04);
 }
-.orb-img { display: block; flex-shrink: 0; max-width: var(--r); max-height: var(--r); width: auto; height: auto; }
+.orb-img { display: block; flex-shrink: 0; width: var(--r); height: var(--r); object-fit: contain; }
 /* clickable hit areas (invisible, sit on top) */
 .orb-hit {
   position: absolute; border-radius: 50%; cursor: pointer;
@@ -148,7 +148,7 @@ body.admin-mode #add-btn { display: block; }
 }
 .modal-close:hover { color: var(--text); }
 .modal-emoji { font-size: 48px; text-align: center; margin-bottom: 12px; }
-.modal-img-preview { max-width: 72px; max-height: 72px; width: auto; height: auto; display: block; margin: 0 auto 12px; object-fit: contain; }
+.modal-img-preview { width: 72px; height: 72px; display: block; margin: 0 auto 12px; object-fit: contain; }
 .modal-name { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; margin-bottom: 6px; }
 .modal-desc { font-size: 13px; color: var(--muted); line-height: 1.65; text-align: center; margin-bottom: 14px; }
 .modal-pills { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
