@@ -514,7 +514,8 @@ const colorCache = {};
    COLOR EXTRACTION
 ════════════════════════════════════════════ */
 function extractColors(src, isEmoji, id, cb) {
-  if (colorCache[id]) { cb(colorCache[id]); return; }
+  /* id in colorCache covers both successes {bg,glow} and failure sentinels {} */
+  if (id in colorCache) { cb(colorCache[id]); return; }
   const SZ = 48;
   const cv = document.createElement('canvas');
   cv.width = cv.height = SZ;
@@ -532,8 +533,8 @@ function extractColors(src, isEmoji, id, cb) {
         const sat=mx===0?0:(mx-mn)/mx, score=sat*(mx/255);
         if (score>bestSat){ bestSat=score; gR=r; gG=g; gB=b; }
       }
-    } catch(e){ cb(null); return; }
-    if (!n){ cb(null); return; }
+    } catch(e){ colorCache[id]={}; cb({}); return; }
+    if (!n){ colorCache[id]={}; cb({}); return; }
     const d=0.25;
     const bg   = hexN(Math.round(rS/n*d), Math.round(gS/n*d), Math.round(bS/n*d));
     const glow = hexN(gR, gG, gB);
@@ -548,18 +549,22 @@ function extractColors(src, isEmoji, id, cb) {
     ctx.fillText(src, SZ/2, SZ/2);
     process();
   } else {
-    const loadImg = (imgSrc, onFail) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => { ctx.clearRect(0,0,SZ,SZ); ctx.drawImage(img,0,0,SZ,SZ); process(); };
-      img.onerror = () => onFail ? onFail() : cb(null);
-      img.src = imgSrc;
-    };
     if (src.startsWith('data:')) {
-      loadImg(src, null);
+      /* data: URLs must NOT have crossOrigin set — some browsers reject that combination */
+      const img = new Image();
+      img.onload = () => { ctx.clearRect(0,0,SZ,SZ); ctx.drawImage(img,0,0,SZ,SZ); process(); };
+      img.onerror = () => { colorCache[id]={};  cb({}); };
+      img.src = src;
     } else {
-      /* try direct first; if CORS blocks it, retry via proxy that adds CORS headers */
-      loadImg(src, () => loadImg(`https://corsproxy.io/?${encodeURIComponent(src)}`, null));
+      /* external URL: try direct first, then CORS proxy */
+      const loadImg = (imgSrc, onFail) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { ctx.clearRect(0,0,SZ,SZ); ctx.drawImage(img,0,0,SZ,SZ); process(); };
+        img.onerror = () => onFail ? onFail() : (colorCache[id]={}, cb({}));
+        img.src = imgSrc;
+      };
+      loadImg(src, () => loadImg(`https://wsrv.nl/?url=${encodeURIComponent(src)}`, null));
     }
   }
 }
@@ -741,12 +746,25 @@ function updatePixiOrb(s, node, w, h) {
   dot.drawCircle(dOff.x, dOff.y, dOff.r);
   dot.endFill();
 
-  /* async color extraction */
-  const src = s.img || s.glyph;
-  extractColors(src, !s.img, s.id, () => {
-    /* re-draw with correct colors on next tick — simulation handles it */
-    if (simulation) simulation.alpha(0.1).restart();
-  });
+  /* trigger extraction only when cache entry is absent (undefined = never tried) */
+  if (!(s.id in colorCache)) {
+    const src = s.img || s.glyph;
+    extractColors(src, !s.img, s.id, (colors) => {
+      if (!colors?.bg && s.img) {
+        /* image URL extraction failed — fall back to the emoji glyph for colors so
+           the orb always gets a meaningful tint rather than the generic fallback */
+        delete colorCache[s.id];
+        extractColors(s.glyph, true, s.id, (gc) => {
+          if (!gc?.bg) colorCache[s.id] = {};  /* glyph also failed — prevent infinite retry */
+          const nd = simNodes.find(n => n.id === s.id);
+          if (nd && pixiOrbs[s.id]) updatePixiOrb(s, nd, W(), H());
+        });
+      } else {
+        const nd = simNodes.find(n => n.id === s.id);
+        if (nd && pixiOrbs[s.id]) updatePixiOrb(s, nd, W(), H());
+      }
+    });
+  }
 }
 
 function createDomLabel(s, node) {

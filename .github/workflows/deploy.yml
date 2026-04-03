@@ -1,4 +1,4 @@
-name: Deploy
+name: "Deploy 'main' branch to GitHub Pages"
 
 on:
   push:
@@ -17,17 +17,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
 
-      - name: Inject token
+      - name: "Inject GitHub Personal Access Token"
         run: |
           sed -i "s/PASTE_YOUR_NEW_TOKEN_HERE/${{ secrets.INDEXDOTHTML_OWNER_TOKEN_GITHUB_PERSONAL_ACCESS_TOKEN_GISTS }}/g" index.html
 
-      - uses: actions/configure-pages@v4
+      - name: "Configure GitHub Pages"
+        uses: actions/configure-pages@v4
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: "Upload GitHubPages Artifact"
+        uses: actions/upload-pages-artifact@v3
         with:
           path: .
 
-      - uses: actions/deploy-pages@v4
+      - name: "Deploy to GitHub Pages"
+        uses: actions/deploy-pages@v4
         id: deployment

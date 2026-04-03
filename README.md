@@ -392,7 +392,7 @@ function extractColors(src, isEmoji, id, cb) {
       img.src = src;
     } else {
       // try direct first; if CORS-blocked, retry via proxy that adds CORS headers
-      loadImg(src, () => loadImg(`https://corsproxy.io/?${encodeURIComponent(src)}`, null));
+      loadImg(src, () => loadImg(`https://wsrv.nl/?url=${encodeURIComponent(src)}`, null));
     }
   }
 }
@@ -1251,7 +1251,7 @@ Large images will inflate the Gist file significantly. Prefer external image URL
 
 ### CORS proxy dependency
 
-Color extraction for external image URLs falls back to corsproxy.io if the image server doesn't serve CORS headers. If the proxy is unavailable, those orbs show the accent purple fallback color until the proxy recovers.
+Color extraction for external image URLs falls back to wsrv.nl if the image server doesn't serve CORS headers. wsrv.nl is an image-specific proxy that handles binary content and adds `Access-Control-Allow-Origin: *`. Note: corsproxy.io was tried first but blocks binary/image content on its free plan (returns 403). If wsrv.nl is unavailable, extraction falls back to the emoji glyph colors instead.
 
 ---
 
@@ -1268,7 +1268,7 @@ Color extraction for external image URLs falls back to corsproxy.io if the image
 | CSS custom properties | native | `--r` drives all responsive sizing via `calc()` |
 | ResizeObserver API | native | Responsive relayout on window resize |
 | Iconify API | public | 200k+ open-source icons; no key required |
-| corsproxy.io | public | CORS proxy fallback for external image color extraction |
+| wsrv.nl | public | Image proxy fallback for external image color extraction (supports binary, adds CORS headers) |
 | GitHub Gist API | v3 | Cross-device JSON persistence |
 | GitHub Pages | — | Static hosting |
 | GitHub Actions | — | CI/CD pipeline for token injection and deployment |
