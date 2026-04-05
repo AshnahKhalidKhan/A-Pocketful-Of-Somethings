@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Read(//c/Users/ashnah.khalid/OneDrive - Astera Software/Desktop/Certifications/A-Pocketful-Of-Somethings/**)",
+      "Read(//tmp/**)"
     ]
   }
 }

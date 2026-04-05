@@ -42,7 +42,7 @@ header {
 .legend { display: flex; gap: 14px; align-items: center; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
 .leg-orb { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
-.leg-achieved { background: #1D9E75; box-shadow: 0 0 6px rgba(29,158,117,0.6); }
+.leg-achieved { background: var(--done); box-shadow: 0 0 6px rgba(29,158,117,0.6); }
 .leg-pending { background: transparent; border: 1.5px dashed rgba(255,255,255,0.25); }
 .header-right { display: flex; align-items: center; gap: 8px; }
 .visitor-tag {
@@ -355,9 +355,9 @@ body.admin-mode .modal-admin-actions { display: flex; }
     <div class="field">
       <label>Icon</label>
       <div class="icon-tabs">
-        <button class="itab active" onclick="switchIconTab('emoji',this)">icons</button>
-        <button class="itab" onclick="switchIconTab('upload',this)">upload</button>
-        <button class="itab" onclick="switchIconTab('url',this)">link</button>
+        <button class="itab active" data-tab="emoji"  onclick="switchIconTab('emoji',this)">icons</button>
+        <button class="itab"        data-tab="upload" onclick="switchIconTab('upload',this)">upload</button>
+        <button class="itab"        data-tab="url"    onclick="switchIconTab('url',this)">link</button>
       </div>
       <div class="icon-panel active" id="ip-emoji">
         <input type="text" class="icon-search" id="icon-search" placeholder="search 200k+ icons…" oninput="searchIcons(this.value)">
@@ -431,6 +431,62 @@ const EMOJIS = ['⚛️','🧮','☁️','🤖','🌍','🎓','🧠','🦾','�
 
 const TIER_SCALE = {1:0.48, 2:0.78, 3:1.15, 4:1.68, 5:2.35};
 
+/* ════════════════════════════════════════════
+   RENDER CONSTANTS
+════════════════════════════════════════════ */
+// Color extraction
+const COLOR_SAMPLE_SIZE    = 48;    // offscreen canvas size for pixel sampling
+const DARKEN_FACTOR        = 0.25;  // bg fill darkness multiplier (0–1, lower = darker)
+
+// Achieved orb glow
+const GLOW_RINGS           = 3;     // number of soft outer glow rings
+const GLOW_RING_GAP        = 3;     // px between each glow ring layer
+const GLOW_RING_WIDTH_BASE = 2;     // line width multiplier per ring index
+const GLOW_INNER_ALPHA     = 0.65;  // opacity of the solid inner ring
+const GLOW_OUTER_ALPHA     = 0.08;  // base opacity for soft rings (divided by ring index)
+const GLOW_INNER_OFFSET    = 1.5;   // px beyond radius for the solid ring
+
+// Pending orb outline
+const PENDING_STROKE_W     = 1.5;   // dashed stroke width
+const PENDING_STROKE_A     = 0.22;  // dashed stroke opacity
+const DASH_SEG_SCALE       = 1.2;   // segment count = max(DASH_SEG_MIN, r * DASH_SEG_SCALE)
+const DASH_SEG_MIN         = 12;    // minimum arc segment count
+
+// Canvas boundary (visual outer edge per orb type)
+const ACHIEVED_GLOW_EDGE   = 9;     // r + this = visual edge for achieved orbs
+const PENDING_EDGE         = 1;     // r + this = visual edge for pending orbs
+
+// Status dot
+const DOT_SCALE            = 0.12;  // dot radius as fraction of orb radius
+const DOT_MIN_R            = 4;     // minimum dot radius px
+const DOT_MAX_R            = 10;    // maximum dot radius px
+const DOT_CENTRE_BIAS      = 0.55;  // angle weight toward canvas centre (0 = pure seeded, 1 = pure centre)
+const DOT_PENDING_ALPHA    = 0.7;   // opacity of pending-state dot
+
+// Simulation
+const CANVAS_FILL_RATIO    = 0.88;  // fraction of canvas area the orb set fills
+const ORB_MIN_RADIUS       = 22;    // minimum orb radius px
+const INITIAL_SCATTER      = 80;    // max px scatter from centre on first placement
+const CHARGE_STRENGTH      = 6;     // D3 forceManyBody repulsion strength
+const CENTRE_STRENGTH      = 0.04;  // D3 forceCenter pull strength
+const ALPHA_DECAY          = 0.025; // D3 simulation cooling rate
+
+// UI timing (ms)
+const XP_ANIM_DELAY        = 80;
+const SYNC_STATUS_TTL      = 2500;
+const KNOCK_FLASH_TTL      = 600;
+const KNOCK_RESET_TTL      = 2000;
+const ICON_SEARCH_DELAY    = 350;
+const ONBOARD_FOCUS_DELAY  = 80;
+
+// External services
+const CORS_PROXY           = 'https://wsrv.nl/?url=';
+const ICONIFY_API_BASE     = 'https://api.iconify.design';
+const ICONIFY_SEARCH_LIMIT = 54;
+
+// Business rules
+const XP_PER_TIER = 80;  // XP value = tier * XP_PER_TIER
+
 const ORB_BG_FALLBACK = {
   Quantum:'#2d1f6e', Engineering:'#0f3d2a', Robotics:'#4a1f0e',
   Community:'#4a3200', Research:'#3d0f2a', Milestone:'#0a2545', Other:'#1a1a2e'
@@ -456,13 +512,22 @@ const DEFAULT_SKILLS = [
 /* ════════════════════════════════════════════
    MODE DETECTION
 ════════════════════════════════════════════ */
+
+/** localStorage helpers — private browsing or storage-quota errors won't crash the app */
+function safeLocalGet(key, fallback = '') {
+  try { return localStorage.getItem(key) || fallback; } catch(e) { return fallback; }
+}
+function safeLocalSet(key, value) {
+  try { localStorage.setItem(key, value); } catch(e) { console.warn('localStorage write failed:', e); }
+}
+
 const params        = new URLSearchParams(window.location.search);
 const urlGistId     = params.get('id');
 const isOwnerView   = !urlGistId;
 
 let ACTIVE_GIST_ID  = isOwnerView ? OWNER_GIST_ID : urlGistId;
-let ACTIVE_TOKEN    = isOwnerView ? OWNER_TOKEN    : (localStorage.getItem(`pocketful_token_${urlGistId}`) || '');
-let ACTIVE_USERNAME = isOwnerView ? OWNER_USERNAME : (localStorage.getItem(`pocketful_username_${urlGistId}`) || '');
+let ACTIVE_TOKEN    = isOwnerView ? OWNER_TOKEN    : safeLocalGet(`pocketful_token_${urlGistId}`);
+let ACTIVE_USERNAME = isOwnerView ? OWNER_USERNAME : safeLocalGet(`pocketful_username_${urlGistId}`);
 
 if (!isOwnerView) {
   const tag = document.getElementById('visitor-tag');
@@ -484,7 +549,6 @@ let selectedStatus = 'achieved';
 let iconMode       = 'emoji';
 let uploadedImg    = null;
 let urlImg         = null;
-let currentIconTab = 'emoji';
 
 /* ════════════════════════════════════════════
    PIXI.JS SETUP
@@ -508,6 +572,11 @@ const glowContainer = new PIXI.Container();
 app.stage.addChild(glowContainer);
 app.stage.addChild(orbContainer);
 
+/* Drive rendering via Pixi's ticker (rAF-based, always fires for visible pages).
+   D3 simulation runs physics independently via its own timer; renderFrame just
+   reads whatever positions simNodes currently holds. */
+app.ticker.add(() => { if (simNodes.length) renderFrame(); });
+
 const colorCache = {};
 
 /* ════════════════════════════════════════════
@@ -516,36 +585,35 @@ const colorCache = {};
 function extractColors(src, isEmoji, id, cb) {
   /* id in colorCache covers both successes {bg,glow} and failure sentinels {} */
   if (id in colorCache) { cb(colorCache[id]); return; }
-  const SZ = 48;
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = SZ;
-  const ctx = cv.getContext('2d');
+  const sampleCanvas = document.createElement('canvas');
+  sampleCanvas.width = sampleCanvas.height = COLOR_SAMPLE_SIZE;
+  const ctx = sampleCanvas.getContext('2d');
+  const SZ  = COLOR_SAMPLE_SIZE;
 
   function process() {
-    let rS=0,gS=0,bS=0,n=0, bestSat=0, gR=180,gG=180,gB=180;
+    let redSum=0, greenSum=0, blueSum=0, pixelCount=0, bestSat=0, glowR=180, glowG=180, glowB=180;
     try {
-      const px = ctx.getImageData(0,0,SZ,SZ).data;
-      for (let i=0;i<px.length;i+=4) {
-        if (px[i+3]<30) continue;
-        const r=px[i],g=px[i+1],b=px[i+2];
-        rS+=r; gS+=g; bS+=b; n++;
-        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-        const sat=mx===0?0:(mx-mn)/mx, score=sat*(mx/255);
-        if (score>bestSat){ bestSat=score; gR=r; gG=g; gB=b; }
+      const px = ctx.getImageData(0, 0, SZ, SZ).data;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i+3] < 30) continue;
+        const r=px[i], g=px[i+1], b=px[i+2];
+        redSum+=r; greenSum+=g; blueSum+=b; pixelCount++;
+        const maxChannel=Math.max(r,g,b), minChannel=Math.min(r,g,b);
+        const sat=maxChannel===0 ? 0 : (maxChannel-minChannel)/maxChannel, score=sat*(maxChannel/255);
+        if (score > bestSat) { bestSat=score; glowR=r; glowG=g; glowB=b; }
       }
-    } catch(e){ colorCache[id]={}; cb({}); return; }
-    if (!n){ colorCache[id]={}; cb({}); return; }
-    const d=0.25;
-    const bg   = hexN(Math.round(rS/n*d), Math.round(gS/n*d), Math.round(bS/n*d));
-    const glow = hexN(gR, gG, gB);
+    } catch(e) { console.warn('extractColors: pixel sampling failed (canvas taint?):', e); colorCache[id]={}; cb({}); return; }
+    if (!pixelCount) { colorCache[id]={}; cb({}); return; }
+    const bg   = hexN(Math.round(redSum/pixelCount*DARKEN_FACTOR), Math.round(greenSum/pixelCount*DARKEN_FACTOR), Math.round(blueSum/pixelCount*DARKEN_FACTOR));
+    const glow = hexN(glowR, glowG, glowB);
     colorCache[id] = {bg, glow};
     cb(colorCache[id]);
   }
 
   if (isEmoji) {
-    ctx.clearRect(0,0,SZ,SZ);
-    ctx.font = `${SZ*0.78}px serif`;
-    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.clearRect(0, 0, SZ, SZ);
+    ctx.font = `${SZ * 0.78}px serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(src, SZ/2, SZ/2);
     process();
   } else {
@@ -553,7 +621,7 @@ function extractColors(src, isEmoji, id, cb) {
       /* data: URLs must NOT have crossOrigin set — some browsers reject that combination */
       const img = new Image();
       img.onload = () => { ctx.clearRect(0,0,SZ,SZ); ctx.drawImage(img,0,0,SZ,SZ); process(); };
-      img.onerror = () => { colorCache[id]={};  cb({}); };
+      img.onerror = () => { colorCache[id]={}; cb({}); };
       img.src = src;
     } else {
       /* external URL: try direct first, then CORS proxy */
@@ -564,7 +632,7 @@ function extractColors(src, isEmoji, id, cb) {
         img.onerror = () => onFail ? onFail() : (colorCache[id]={}, cb({}));
         img.src = imgSrc;
       };
-      loadImg(src, () => loadImg(`https://wsrv.nl/?url=${encodeURIComponent(src)}`, null));
+      loadImg(src, () => loadImg(`${CORS_PROXY}${encodeURIComponent(src)}`, null));
     }
   }
 }
@@ -579,23 +647,43 @@ function hexToNum(hex){
 /* ════════════════════════════════════════════
    DOT HELPERS
 ════════════════════════════════════════════ */
-function dotRadius(r){ return Math.min(10, Math.max(4, r*0.12)); }
+function dotRadius(r){ return Math.min(DOT_MAX_R, Math.max(DOT_MIN_R, r * DOT_SCALE)); }
 
 function dotOffset(r, id, cx, cy, W, H){
-  const seeded = ((id*2654435761)>>>0)/4294967296;
-  const base   = seeded * Math.PI * 2;
-  const toC    = Math.atan2(H/2-cy, W/2-cx);
-  const blend  = 0.55;
-  const angle  = Math.atan2(
-    Math.sin(base)*(1-blend)+Math.sin(toC)*blend,
-    Math.cos(base)*(1-blend)+Math.cos(toC)*blend
+  const seeded        = ((id*2654435761)>>>0)/4294967296;
+  const base          = seeded * Math.PI * 2;
+  const toCenterAngle = Math.atan2(H/2-cy, W/2-cx);
+  const blend         = DOT_CENTRE_BIAS;
+  const angle         = Math.atan2(
+    Math.sin(base)*(1-blend)+Math.sin(toCenterAngle)*blend,
+    Math.cos(base)*(1-blend)+Math.cos(toCenterAngle)*blend
   );
-  const dr=dotRadius(r);
   return {
     x: cx + Math.cos(angle)*r,
     y: cy + Math.sin(angle)*r,
-    r: dr
+    r: dotRadius(r)
   };
+}
+
+/* ════════════════════════════════════════════
+   SHARED HELPERS
+════════════════════════════════════════════ */
+/** XP value for a given tier */
+const calcXP = tier => tier * XP_PER_TIER;
+
+/** Icon source: image URL when set, otherwise emoji glyph */
+const getIconSrc = s => s.img || s.glyph;
+
+/** Find a skill by id, coercing string ids to number */
+const findSkill = id => SKILLS.find(x => x.id === +id);
+
+/** Pills HTML for the detail modal — centralises the duplicated markup */
+function buildPillsHTML(s) {
+  const statusClass = s.achieved ? 'achieved' : 'pending-pill';
+  const statusLabel = s.achieved ? '✦ Achieved' : '◌ In progress';
+  return `<span class="pill">Tier ${s.tier}</span>` +
+         `<span class="pill">+${s.xp} XP</span>` +
+         `<span class="pill ${statusClass}">${statusLabel}</span>`;
 }
 
 /* ════════════════════════════════════════════
@@ -605,10 +693,10 @@ let simulation  = null;
 let simNodes    = [];
 
 function computeRadius(s, W, H){
-  const area      = W * H;
-  const totalSq   = SKILLS.reduce((a,x)=>a+TIER_SCALE[x.tier]**2, 0);
-  const unit      = Math.sqrt(area * 0.88 / (totalSq * Math.PI));
-  return Math.max(22, Math.round(unit * TIER_SCALE[s.tier]));
+  const area    = W * H;
+  const totalSq = SKILLS.reduce((a,x) => a + TIER_SCALE[x.tier]**2, 0);
+  const unit    = Math.sqrt(area * CANVAS_FILL_RATIO / (totalSq * Math.PI));
+  return Math.max(ORB_MIN_RADIUS, Math.round(unit * TIER_SCALE[s.tier]));
 }
 
 function buildSimulation(W, H) {
@@ -620,35 +708,28 @@ function buildSimulation(W, H) {
   simNodes.forEach(n => { prevPos[n.id] = {x:n.x, y:n.y}; });
 
   simNodes = SKILLS.map(s => {
-    const r = radii[s.id];
-    const p = prevPos[s.id];
-    const edge = s.achieved ? r + 9 : r + 1;
-    const ix = Math.max(edge, Math.min(W - edge, p ? p.x : W/2 + (Math.random()-0.5)*80));
-    const iy = Math.max(edge, Math.min(H - edge, p ? p.y : H/2 + (Math.random()-0.5)*80));
-    return {
-      id: s.id,
-      r,
-      achieved: s.achieved,
-      x: ix,
-      y: iy,
-    };
+    const r    = radii[s.id];
+    const p    = prevPos[s.id];
+    const edge = s.achieved ? r + ACHIEVED_GLOW_EDGE : r + PENDING_EDGE;
+    const initialX = Math.max(edge, Math.min(W - edge, p ? p.x : W/2 + (Math.random()-0.5)*INITIAL_SCATTER));
+    const initialY = Math.max(edge, Math.min(H - edge, p ? p.y : H/2 + (Math.random()-0.5)*INITIAL_SCATTER));
+    return { id: s.id, r, achieved: s.achieved, x: initialX, y: initialY };
   });
 
   if (simulation) simulation.stop();
 
   simulation = d3.forceSimulation(simNodes)
-    .force('charge', d3.forceManyBody().strength(6))
-    .force('center', d3.forceCenter(W/2, H/2).strength(0.04))
+    .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
+    .force('center', d3.forceCenter(W/2, H/2).strength(CENTRE_STRENGTH))
     .force('collide', d3.forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4))
     .force('bound', () => {
       simNodes.forEach(n => {
-        const edge = n.achieved ? n.r + 9 : n.r + 1;
+        const edge = n.achieved ? n.r + ACHIEVED_GLOW_EDGE : n.r + PENDING_EDGE;
         n.x = Math.max(edge, Math.min(W - edge, n.x));
         n.y = Math.max(edge, Math.min(H - edge, n.y));
       });
     })
-    .alphaDecay(0.025)
-    .on('tick', renderFrame);
+    .alphaDecay(ALPHA_DECAY);
 
   return simulation;
 }
@@ -664,12 +745,12 @@ const H = () => wrap.offsetHeight;
 function renderFrame() {
   const w = W(), h = H();
   simNodes.forEach(n => {
-    const edge = n.achieved ? n.r + 9 : n.r + 1;
+    const edge = n.achieved ? n.r + ACHIEVED_GLOW_EDGE : n.r + PENDING_EDGE;
     n.x = Math.max(edge, Math.min(w - edge, n.x));
     n.y = Math.max(edge, Math.min(h - edge, n.y));
   });
   simNodes.forEach(node => {
-    const s = SKILLS.find(x=>x.id===node.id);
+    const s = findSkill(node.id);
     if (!s) return;
     const {x, y, r} = node;
 
@@ -684,7 +765,7 @@ function renderFrame() {
 
   /* remove stale */
   Object.keys(pixiOrbs).forEach(id => {
-    if (!SKILLS.find(s=>s.id===+id)) destroyOrb(+id);
+    if (!findSkill(id)) destroyOrb(+id);
   });
 }
 
@@ -698,70 +779,73 @@ function createPixiOrb(s, node) {
   pixiOrbs[s.id] = {circle, glow, dot};
 }
 
-function updatePixiOrb(s, node, w, h) {
-  const {circle, glow, dot} = pixiOrbs[s.id];
-  const {x, y, r} = node;
-  const fallback = hexToNum(ORB_BG_FALLBACK[s.cat] || '#1a1a2e');
-
-  /* main circle */
+function drawOrbCircle(circle, s, x, y, r) {
   circle.clear();
-  const bgColor = colorCache[s.id]?.bg ? hexToNum(colorCache[s.id].bg) : fallback;
   if (s.achieved) {
+    const fallback = hexToNum(ORB_BG_FALLBACK[s.cat] || '#1a1a2e');
+    const bgColor  = colorCache[s.id]?.bg ? hexToNum(colorCache[s.id].bg) : fallback;
     circle.beginFill(bgColor, 1);
     circle.drawCircle(x, y, r);
     circle.endFill();
   } else {
-    /* pending: transparent with dashed border — draw as thin ring */
-    circle.lineStyle(1.5, 0xffffff, 0.22);
-    /* dashed circle via segments */
-    const segs = Math.max(12, Math.round(r*1.2));
-    for (let i=0;i<segs;i+=2) {
-      const a1=(i/segs)*Math.PI*2, a2=((i+0.8)/segs)*Math.PI*2;
-      circle.arc(x, y, r, a1, a2);
+    /* pending: transparent with dashed outline drawn as arc segments */
+    circle.lineStyle(PENDING_STROKE_W, 0xffffff, PENDING_STROKE_A);
+    const segs = Math.max(DASH_SEG_MIN, Math.round(r * DASH_SEG_SCALE));
+    for (let i = 0; i < segs; i += 2) {
+      circle.arc(x, y, r, (i / segs) * Math.PI * 2, ((i + 0.8) / segs) * Math.PI * 2);
       circle.closePath();
     }
   }
+}
 
-  /* glow ring for achieved */
+function drawOrbGlow(glow, s, x, y, r) {
   glow.clear();
-  if (s.achieved) {
-    const glowColor = colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x7F77DD;
-    glow.lineStyle(2.5, glowColor, 0.65);
-    glow.drawCircle(x, y, r+1.5);
-    /* soft outer glow */
-    for (let i=1;i<=3;i++) {
-      glow.lineStyle(i*2, glowColor, 0.08/i);
-      glow.drawCircle(x, y, r+i*3);
-    }
+  if (!s.achieved) return;
+  const glowColor = colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x7F77DD;
+  glow.lineStyle(2.5, glowColor, GLOW_INNER_ALPHA);
+  glow.drawCircle(x, y, r + GLOW_INNER_OFFSET);
+  for (let i = 1; i <= GLOW_RINGS; i++) {
+    glow.lineStyle(i * GLOW_RING_WIDTH_BASE, glowColor, GLOW_OUTER_ALPHA / i);
+    glow.drawCircle(x, y, r + i * GLOW_RING_GAP);
   }
+}
 
-  /* status dot */
+function drawOrbDot(dot, s, x, y, r, w, h) {
   dot.clear();
-  const dOff   = dotOffset(r, s.id, x, y, w, h);
+  const dotPos = dotOffset(r, s.id, x, y, w, h);
   const dotClr = s.achieved
     ? (colorCache[s.id]?.glow ? hexToNum(colorCache[s.id].glow) : 0x7F77DD)
     : 0x7F77DD;
-  const dotAlpha = s.achieved ? 1 : 0.7;
-  dot.beginFill(dotClr, dotAlpha);
-  dot.drawCircle(dOff.x, dOff.y, dOff.r);
+  dot.beginFill(dotClr, s.achieved ? 1 : DOT_PENDING_ALPHA);
+  dot.drawCircle(dotPos.x, dotPos.y, dotPos.r);
   dot.endFill();
+}
+
+function updatePixiOrb(s, node, w, h) {
+  const {circle, glow, dot} = pixiOrbs[s.id];
+  const {x, y, r} = node;
+  drawOrbCircle(circle, s, x, y, r);
+  drawOrbGlow(glow, s, x, y, r);
+  drawOrbDot(dot, s, x, y, r, w, h);
 
   /* trigger extraction only when cache entry is absent (undefined = never tried) */
   if (!(s.id in colorCache)) {
-    const src = s.img || s.glyph;
-    extractColors(src, !s.img, s.id, (colors) => {
+    /* re-renders the orb once color data is available — used as extraction callback */
+    const repaintOrb = (skill) => {
+      const nd = simNodes.find(n => n.id === skill.id);
+      if (nd && pixiOrbs[skill.id]) updatePixiOrb(skill, nd, W(), H());
+    };
+    extractColors(getIconSrc(s), !s.img, s.id, (colors) => {
       if (!colors?.bg && s.img) {
-        /* image URL extraction failed — fall back to the emoji glyph for colors so
-           the orb always gets a meaningful tint rather than the generic fallback */
+        /* image URL extraction failed — fall back to the emoji glyph so the orb
+           always gets a meaningful tint rather than the generic fallback */
         delete colorCache[s.id];
         extractColors(s.glyph, true, s.id, (gc) => {
           if (!gc?.bg) colorCache[s.id] = {};  /* glyph also failed — prevent infinite retry */
-          const nd = simNodes.find(n => n.id === s.id);
-          if (nd && pixiOrbs[s.id]) updatePixiOrb(s, nd, W(), H());
+          repaintOrb(s);
         });
       } else {
-        const nd = simNodes.find(n => n.id === s.id);
-        if (nd && pixiOrbs[s.id]) updatePixiOrb(s, nd, W(), H());
+        repaintOrb(s);
       }
     });
   }
@@ -816,13 +900,26 @@ function updateDomLabel(s, node) {
     } else if (nameEl) { nameEl.remove(); }
 
   } else {
-    /* Emoji path — clear any leftover img element from a previous image state */
+    /* Emoji path — use DOM methods to avoid inserting user text via innerHTML */
     if (lbl.querySelector('img.orb-img')) lbl.innerHTML = '';
     lbl.style.backgroundImage = '';
     lbl.style.borderRadius    = '';
     lbl.style.height          = '';
-    lbl.innerHTML = `<span class="orb-emoji">${s.glyph}</span>`
-      + (showName ? `<span class="orb-name">${s.name}</span>` : '');
+
+    let emojiEl = lbl.querySelector('.orb-emoji');
+    if (!emojiEl) {
+      lbl.innerHTML = '';
+      emojiEl = document.createElement('span');
+      emojiEl.className = 'orb-emoji';
+      lbl.appendChild(emojiEl);
+    }
+    if (emojiEl.textContent !== s.glyph) emojiEl.textContent = s.glyph;
+
+    let nameEl = lbl.querySelector('.orb-name');
+    if (showName) {
+      if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'orb-name'; lbl.appendChild(nameEl); }
+      if (nameEl.textContent !== s.name) nameEl.textContent = s.name;
+    } else if (nameEl) { nameEl.remove(); }
   }
 
   hit.style.left   = x + 'px';
@@ -870,12 +967,19 @@ function updateXP() {
   const pct    = total ? Math.round((earned/total)*100) : 0;
   document.getElementById('xp-lbl').textContent = earned+' XP';
   document.getElementById('xp-pct').textContent = pct+'%';
-  setTimeout(()=>{ document.getElementById('xp-fill').style.width=pct+'%'; }, 80);
+  setTimeout(() => { document.getElementById('xp-fill').style.width = pct+'%'; }, XP_ANIM_DELAY);
 }
 
 /* ════════════════════════════════════════════
    GIST SYNC
 ════════════════════════════════════════════ */
+
+/** Applies a loaded skills array — sets SKILLS and advances nextId past the highest existing id. */
+function applySkillsData(data) {
+  SKILLS  = data;
+  nextId  = Math.max(...SKILLS.map(s => s.id)) + 1;
+}
+
 function showSyncStatus(msg, isError) {
   const el = document.getElementById('sync-status');
   el.textContent = msg;
@@ -884,7 +988,7 @@ function showSyncStatus(msg, isError) {
   el.style.border = `0.5px solid ${isError?'rgba(220,80,80,0.25)':'rgba(29,158,117,0.25)'}`;
   el.style.opacity = '1';
   clearTimeout(el._t);
-  el._t = setTimeout(()=>{ el.style.opacity='0'; }, 2500);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, SYNC_STATUS_TTL);
 }
 
 async function loadFromGist() {
@@ -900,20 +1004,21 @@ async function loadFromGist() {
     if (!raw.ok) throw new Error('raw failed');
     const data = JSON.parse(await raw.text());
     if (Array.isArray(data) && data.length > 0) {
-      SKILLS = data; nextId = Math.max(...SKILLS.map(s=>s.id))+1;
+      applySkillsData(data);
     } else {
       SKILLS = isOwnerView ? DEFAULT_SKILLS : []; nextId = isOwnerView ? 15 : 1;
       if (isOwnerView) await saveToGist();
     }
   } catch(e) {
+    console.warn('loadFromGist: primary fetch failed, trying raw fallback:', e);
     try {
       const raw = await fetch(`https://gist.githubusercontent.com/${ACTIVE_USERNAME}/${ACTIVE_GIST_ID}/raw/${GIST_FILE}`);
       if (!raw.ok) throw new Error();
       const data = JSON.parse(await raw.text());
       if (Array.isArray(data) && data.length > 0) {
-        SKILLS = data; nextId = Math.max(...SKILLS.map(s=>s.id))+1; return;
+        applySkillsData(data); return;
       }
-    } catch(e2) {}
+    } catch(e2) { console.warn('loadFromGist: raw fallback also failed:', e2); }
     SKILLS = isOwnerView ? DEFAULT_SKILLS : []; nextId = isOwnerView ? 15 : 1;
     showSyncStatus("offline — changes won't sync", true);
   }
@@ -928,7 +1033,7 @@ async function saveToGist() {
     });
     if (!res.ok) throw new Error(res.status);
     showSyncStatus('saved ✓', false);
-  } catch(e) { showSyncStatus('sync failed', true); }
+  } catch(e) { console.error('saveToGist failed:', e); showSyncStatus('sync failed', true); }
 }
 
 function refreshCanvas() {
@@ -948,13 +1053,13 @@ wrap.appendChild(secretZone);
 secretZone.addEventListener('click', ()=>{
   knockCount++;
   const dot = document.getElementById('kd'+(knockCount-1));
-  if (dot) { dot.classList.add('lit'); setTimeout(()=>dot.classList.remove('lit'),600); }
+  if (dot) { dot.classList.add('lit'); setTimeout(() => dot.classList.remove('lit'), KNOCK_FLASH_TTL); }
   clearTimeout(knockTimer);
   if (knockCount >= 3) {
-    knockCount=0;
+    knockCount = 0;
     openModal('pw-overlay');
-    setTimeout(()=>document.getElementById('pw-input').focus(),100);
-  } else { knockTimer=setTimeout(()=>{ knockCount=0; },2000); }
+    setTimeout(() => document.getElementById('pw-input').focus(), ONBOARD_FOCUS_DELAY);
+  } else { knockTimer = setTimeout(() => { knockCount = 0; }, KNOCK_RESET_TTL); }
 });
 
 function checkPw() {
@@ -980,18 +1085,25 @@ function exitAdmin() {
    DETAIL MODAL
 ════════════════════════════════════════════ */
 function openDetail(id) {
-  const s = SKILLS.find(x=>x.id===+id); if (!s) return;
+  const s = findSkill(id); if (!s) return;
   detailId = s.id;
-  const wrap2 = document.getElementById('m-icon-wrap');
-  wrap2.innerHTML = s.img
-    ? `<img class="modal-img-preview" src="${s.img}" alt="">`
-    : `<div class="modal-emoji">${s.glyph}</div>`;
+  const iconWrapEl = document.getElementById('m-icon-wrap');
+  iconWrapEl.innerHTML = '';
+  if (s.img) {
+    const imgEl = document.createElement('img');
+    imgEl.className = 'modal-img-preview';
+    imgEl.src = s.img;
+    imgEl.alt = '';
+    iconWrapEl.appendChild(imgEl);
+  } else {
+    const emojiDiv = document.createElement('div');
+    emojiDiv.className = 'modal-emoji';
+    emojiDiv.textContent = s.glyph;
+    iconWrapEl.appendChild(emojiDiv);
+  }
   document.getElementById('m-name').textContent = s.name;
   document.getElementById('m-desc').textContent = s.desc||s.name;
-  document.getElementById('m-pills').innerHTML =
-    `<span class="pill">Tier ${s.tier}</span>
-     <span class="pill">+${s.xp} XP</span>
-     <span class="pill ${s.achieved?'achieved':'pending-pill'}">${s.achieved?'✦ Achieved':'◌ In progress'}</span>`;
+  document.getElementById('m-pills').innerHTML = buildPillsHTML(s);
   document.getElementById('m-toggle-btn').textContent = s.achieved ? 'mark in progress' : 'mark achieved';
   openModal('detail-overlay');
 }
@@ -1001,12 +1113,9 @@ function adminDeleteFromDetail() { if (detailId) { closeModal('detail-overlay');
 function adminToggleFromDetail() {
   if (!detailId) return;
   toggleAchieved(detailId);
-  const s=SKILLS.find(x=>x.id===detailId); if(!s) return;
-  document.getElementById('m-toggle-btn').textContent = s.achieved?'mark in progress':'mark achieved';
-  document.getElementById('m-pills').innerHTML =
-    `<span class="pill">Tier ${s.tier}</span>
-     <span class="pill">+${s.xp} XP</span>
-     <span class="pill ${s.achieved?'achieved':'pending-pill'}">${s.achieved?'✦ Achieved':'◌ In progress'}</span>`;
+  const s = findSkill(detailId); if (!s) return;
+  document.getElementById('m-toggle-btn').textContent = s.achieved ? 'mark in progress' : 'mark achieved';
+  document.getElementById('m-pills').innerHTML = buildPillsHTML(s);
 }
 
 /* ════════════════════════════════════════════
@@ -1022,8 +1131,8 @@ function resetForm() {
   document.getElementById('upload-preview').classList.remove('show');
   document.getElementById('url-preview').classList.remove('show');
   uploadedImg=null; urlImg=null; selectedEmoji='🚀'; selectedStatus='achieved'; iconMode='emoji';
-  const _is = document.getElementById('icon-search'); if (_is) _is.value='';
-  switchIconTab('emoji', document.querySelector('.itab'));
+  const searchInput = document.getElementById('icon-search'); if (searchInput) searchInput.value='';
+  switchIconTab('emoji', document.querySelector('.itab[data-tab="emoji"]'));
   buildEmojiGrid(); selectStatus('achieved');
 }
 
@@ -1033,7 +1142,7 @@ function openAddModal() {
 }
 
 function openEditModal(id) {
-  const s=SKILLS.find(x=>x.id===id); if (!s) return;
+  const s = findSkill(id); if (!s) return;
   document.getElementById('form-title').textContent='Edit';
   document.getElementById('f-edit-id').value=id;
   document.getElementById('f-name').value=s.name;
@@ -1044,14 +1153,14 @@ function openEditModal(id) {
   if (s.img) {
     if (s.img.startsWith('data:')) {
       uploadedImg=s.img;
-      const p=document.getElementById('upload-preview'); p.src=s.img; p.classList.add('show');
-      switchIconTab('upload',document.querySelectorAll('.itab')[1]);
+      const previewEl=document.getElementById('upload-preview'); previewEl.src=s.img; previewEl.classList.add('show');
+      switchIconTab('upload',document.querySelector('.itab[data-tab="upload"]'));
     } else {
       urlImg=s.img;
-      const p=document.getElementById('url-preview'); p.src=s.img; p.classList.add('show');
-      switchIconTab('url',document.querySelectorAll('.itab')[2]);
+      const previewEl=document.getElementById('url-preview'); previewEl.src=s.img; previewEl.classList.add('show');
+      switchIconTab('url',document.querySelector('.itab[data-tab="url"]'));
     }
-  } else { selectedEmoji=s.glyph; switchIconTab('emoji',document.querySelectorAll('.itab')[0]); buildEmojiGrid(); }
+  } else { selectedEmoji=s.glyph; switchIconTab('emoji',document.querySelector('.itab[data-tab="emoji"]')); buildEmojiGrid(); }
   openModal('add-overlay');
 }
 
@@ -1061,12 +1170,12 @@ function saveSkill() {
   const tier=parseInt(document.getElementById('f-tier').value);
   const achieved=selectedStatus==='achieved';
   const img = iconMode==='upload'&&uploadedImg ? uploadedImg : iconMode==='url'&&urlImg ? urlImg : null;
-  const editId=document.getElementById('f-edit-id').value;
+  const editId = document.getElementById('f-edit-id').value;
   if (editId) {
-    const s=SKILLS.find(x=>x.id===+editId);
-    if (s){ s.name=name; s.desc=document.getElementById('f-desc').value.trim()||name; s.tier=tier; s.achieved=achieved; s.xp=tier*80; s.img=img; if(!img)s.glyph=selectedEmoji; delete colorCache[s.id]; }
+    const s = findSkill(editId);
+    if (s){ s.name=name; s.desc=document.getElementById('f-desc').value.trim()||name; s.tier=tier; s.achieved=achieved; s.xp=calcXP(tier); s.img=img; if(!img)s.glyph=selectedEmoji; delete colorCache[s.id]; }
   } else {
-    SKILLS.push({id:nextId++,name,desc:document.getElementById('f-desc').value.trim()||name,glyph:selectedEmoji,img,cat:'Other',achieved,xp:tier*80,tier});
+    SKILLS.push({id:nextId++,name,desc:document.getElementById('f-desc').value.trim()||name,glyph:selectedEmoji,img,cat:'Other',achieved,xp:calcXP(tier),tier});
   }
   closeModal('add-overlay'); refreshCanvas(); saveToGist();
 }
@@ -1075,8 +1184,8 @@ function saveSkill() {
    DELETE
 ════════════════════════════════════════════ */
 function openDeleteConfirm(id) {
-  deleteId=id;
-  const s=SKILLS.find(x=>x.id===id);
+  deleteId = id;
+  const s = findSkill(id);
   document.getElementById('del-name').textContent=`"${s?s.name:'this'}"`;
   openModal('del-overlay');
 }
@@ -1086,7 +1195,7 @@ function confirmDelete() {
 }
 
 function toggleAchieved(id) {
-  const s=SKILLS.find(x=>x.id===id);
+  const s = findSkill(id);
   if (s){ s.achieved=!s.achieved; refreshCanvas(); saveToGist(); }
 }
 
@@ -1094,7 +1203,7 @@ function toggleAchieved(id) {
    ICON FORM HELPERS
 ════════════════════════════════════════════ */
 function switchIconTab(mode, btn) {
-  currentIconTab=mode; iconMode=mode;
+  iconMode=mode;
   document.querySelectorAll('.itab').forEach(b=>b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.querySelectorAll('.icon-panel').forEach(p=>p.classList.remove('active'));
@@ -1115,7 +1224,7 @@ function searchIcons(query) {
     const grid = document.getElementById('emoji-grid');
     grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">searching…</div>';
     try {
-      const res  = await fetch(`https://api.iconify.design/search?query=${encodeURIComponent(query.trim())}&limit=54`);
+      const res  = await fetch(`${ICONIFY_API_BASE}/search?query=${encodeURIComponent(query.trim())}&limit=${ICONIFY_SEARCH_LIMIT}`);
       const data = await res.json();
       if (!data.icons || !data.icons.length) {
         grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">no results</div>';
@@ -1123,15 +1232,16 @@ function searchIcons(query) {
       }
       grid.innerHTML = data.icons.map(icon => {
         const [prefix, name] = icon.split(':');
-        const url = `https://api.iconify.design/${prefix}/${name}.svg`;
+        const url = `${ICONIFY_API_BASE}/${prefix}/${name}.svg`;
         const sel = urlImg === url ? ' selected' : '';
         return `<button class="ep-btn${sel}" data-iconurl="${url}" title="${icon}" onclick="pickIconImg('${url}')" style="display:flex;align-items:center;justify-content:center;padding:4px;">` +
           `<img src="${url}" alt="${name}"></button>`;
       }).join('');
     } catch(e) {
+      console.warn('searchIcons: Iconify API request failed:', e);
       grid.innerHTML = '<div style="color:var(--muted);font-size:11px;padding:6px;font-family:\'DM Mono\',monospace;grid-column:1/-1">failed to load — check connection</div>';
     }
-  }, 350);
+  }, ICON_SEARCH_DELAY);
 }
 function pickIconImg(url) {
   urlImg = url; iconMode = 'url';
@@ -1149,9 +1259,17 @@ function handleFileUpload(input) {
   reader.readAsDataURL(file);
 }
 function handleUrlInput(input) {
-  urlImg=input.value.trim(); iconMode='url';
-  const p=document.getElementById('url-preview');
-  if(urlImg){p.src=urlImg;p.classList.add('show');}else p.classList.remove('show');
+  const raw = input.value.trim();
+  /* reject non-http(s) protocols (e.g. javascript:) at the input boundary */
+  if (raw && !raw.startsWith('https://') && !raw.startsWith('http://')) {
+    input.style.borderColor = 'rgba(220,80,80,0.6)';
+    return;
+  }
+  input.style.borderColor = '';
+  urlImg = raw; iconMode = 'url';
+  const previewEl = document.getElementById('url-preview');
+  if (urlImg) { previewEl.src = urlImg; previewEl.classList.add('show'); }
+  else previewEl.classList.remove('show');
 }
 function selectStatus(v) {
   selectedStatus=v;
@@ -1177,37 +1295,37 @@ const OB_STEPS=[
 
 function openOnboarding() { obStep=0; obGistId=''; obToken=''; obUsername=''; renderObStep(); openModal('onboard-overlay'); }
 function renderObStep() {
-  const s=OB_STEPS[obStep];
+  const step=OB_STEPS[obStep];
   document.getElementById('onboard-error').textContent='';
   ['os0','os1','os2'].forEach((id,i)=>{
     document.getElementById(id).className='ostep'+(i<obStep?' done':i===obStep?' active':'');
   });
   document.getElementById('onboard-content').innerHTML=`
-    <div class="onboard-title">${s.title}</div>
-    <div class="onboard-sub">${s.sub}</div>
-    <div class="field"><input type="${s.type}" id="ob-input" placeholder="${s.placeholder}" style="width:100%" onkeydown="if(event.key==='Enter')obNext()"></div>
+    <div class="onboard-title">${step.title}</div>
+    <div class="onboard-sub">${step.sub}</div>
+    <div class="field"><input type="${step.type}" id="ob-input" placeholder="${step.placeholder}" style="width:100%" onkeydown="if(event.key==='Enter')obNext()"></div>
   `;
   document.getElementById('onboard-actions').innerHTML=`
     ${obStep>0?'<button class="btn" onclick="obBack()">back</button>':'<button class="btn" onclick="closeModal(\'onboard-overlay\')">cancel</button>'}
     <button class="btn primary" onclick="obNext()">${obStep<2?'next →':'connect'}</button>
   `;
-  setTimeout(()=>document.getElementById('ob-input')?.focus(),80);
+  setTimeout(() => document.getElementById('ob-input')?.focus(), ONBOARD_FOCUS_DELAY);
 }
 function obBack(){ obStep=Math.max(0,obStep-1); renderObStep(); }
 async function obNext() {
-  const val=document.getElementById('ob-input')?.value.trim();
-  const err=document.getElementById('onboard-error');
-  if (!val){ err.textContent='this field is required'; return; }
-  if (obStep===0) obGistId=val;
-  else if (obStep===1) obToken=val;
-  else { obUsername=val; await obFinish(); return; }
+  const inputValue = document.getElementById('ob-input')?.value.trim();
+  const errorEl    = document.getElementById('onboard-error');
+  if (!inputValue){ errorEl.textContent='this field is required'; return; }
+  if (obStep===0) obGistId=inputValue;
+  else if (obStep===1) obToken=inputValue;
+  else { obUsername=inputValue; await obFinish(); return; }
   obStep++; renderObStep();
 }
 async function obFinish() {
-  const err=document.getElementById('onboard-error');
-  const act=document.getElementById('onboard-actions');
-  act.innerHTML='<span style="font-family:DM Mono,monospace;font-size:11px;color:var(--muted)">connecting...</span>';
-  err.textContent='';
+  const errorEl   = document.getElementById('onboard-error');
+  const actionsEl = document.getElementById('onboard-actions');
+  actionsEl.innerHTML='<span style="font-family:DM Mono,monospace;font-size:11px;color:var(--muted)">connecting...</span>';
+  errorEl.textContent='';
   try {
     const res=await fetch(`https://api.github.com/gists/${obGistId}`,{headers:{'Authorization':`token ${obToken}`}});
     if (!res.ok) throw new Error(res.status===401?'invalid token':res.status===404?'gist not found':`error ${res.status}`);
@@ -1215,8 +1333,8 @@ async function obFinish() {
     if (!gist.files[GIST_FILE]) {
       await fetch(`https://api.github.com/gists/${obGistId}`,{method:'PATCH',headers:{'Authorization':`token ${obToken}`,'Content-Type':'application/json'},body:JSON.stringify({files:{[GIST_FILE]:{content:'[]'}}})});
     }
-    localStorage.setItem(`pocketful_token_${obGistId}`,obToken);
-    localStorage.setItem(`pocketful_username_${obGistId}`,obUsername);
+    safeLocalSet(`pocketful_token_${obGistId}`,obToken);
+    safeLocalSet(`pocketful_username_${obGistId}`,obUsername);
     const url=`${location.origin}${location.pathname}?id=${obGistId}`;
     document.getElementById('onboard-content').innerHTML=`
       <div class="onboard-success">
@@ -1228,11 +1346,12 @@ async function obFinish() {
           <button class="copy-btn" onclick="navigator.clipboard.writeText('${url}').then(()=>{this.textContent='copied!';setTimeout(()=>this.textContent='copy',2000)})">copy</button>
         </div>
       </div>`;
-    act.innerHTML=`<button class="btn primary" onclick="location.href='${url}'">open my pocketful →</button>`;
+    actionsEl.innerHTML=`<button class="btn primary" onclick="location.href='${url}'">open my pocketful →</button>`;
     ['os0','os1','os2'].forEach(id=>document.getElementById(id).className='ostep done');
   } catch(e) {
-    err.textContent='could not connect: '+e.message;
-    act.innerHTML='<button class="btn" onclick="obBack()">back</button><button class="btn primary" onclick="obNext()">retry</button>';
+    console.error('obFinish: Gist connection failed:', e);
+    errorEl.textContent='could not connect: '+e.message;
+    actionsEl.innerHTML='<button class="btn" onclick="obBack()">back</button><button class="btn primary" onclick="obNext()">retry</button>';
   }
 }
 
