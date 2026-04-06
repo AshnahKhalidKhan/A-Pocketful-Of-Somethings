@@ -40,7 +40,7 @@ Built as a single `index.html` file. No framework, no build step, no backend. Ho
 - **Achieved orbs**: filled background (darkened dominant color from the icon), glowing ring and status dot in the icon's most vibrant color
 - **In-progress orbs**: transparent with a dashed white outline, purple status dot
 - Status dots sit on the circumference of each orb, angled dynamically based on orb position on canvas
-- Orbs are laid out using a D3 force simulation with hard boundary constraints — they never overlap the canvas edges or the header bar
+- Orbs are laid out using a custom 2D physics engine — they fall under gravity, pack like liquid particles, and never overlap the canvas edges
 - XP bar and achieved/in-progress legend in the header
 - Click any orb to see its full detail in a popup
 
@@ -48,7 +48,8 @@ Built as a single `index.html` file. No framework, no build step, no backend. Ho
 
 ## Features
 
-- D3 force-directed layout that fills the canvas and rescales responsively on window resize
+- Custom 2D physics engine — gravity, mass, position-based collision solver, and velocity damping give orbs a liquid-particle feel
+- Achieved orbs are heavier (mass 2.0) and fall first, settling at the bottom; in-progress orbs (mass 1.0) drop in after and land above
 - Hard canvas boundary constraints — orbs (including glow ring and dashed outline) never go outside the visible area
 - Dominant color extraction from each emoji/image (canvas pixel sampling) for background fill and glow — with automatic CORS proxy fallback for external image URLs
 - Responsive icon and text sizing via CSS `--r` custom property driven by each orb's radius
@@ -280,7 +281,13 @@ app.stage.addChild(glowContainer);  // added first = drawn below
 app.stage.addChild(orbContainer);   // added second = drawn on top
 ```
 
-Pixi does **not** run its own ticker loop for orbs. Instead it re-draws graphics on every D3 simulation tick, which calls `renderFrame()`.
+Pixi drives rendering via its own ticker (rAF-based, 60fps). D3 runs physics independently via its own timer. The two are decoupled — the ticker reads whatever positions `simNodes` currently holds and redraws:
+
+```js
+app.ticker.add(() => { if (simNodes.length) renderFrame(); });
+```
+
+This separation means rendering continues at 60fps as long as the tab is visible, regardless of whether D3's simulation timer is ticking.
 
 ---
 
@@ -450,81 +457,83 @@ The dot is re-computed every render tick, so it tracks the orb as it moves durin
 
 ---
 
-### Step 7 — D3 force simulation & boundary enforcement
+### Step 7 — Physics engine & boundary enforcement
 
-The layout uses D3's force simulation with four forces:
+The layout uses a custom 2D position-based dynamics engine. D3 was removed — it was designed for graph layouts and could not guarantee hard collision avoidance or support gravity/mass.
+
+#### Physics constants
 
 ```js
-function buildSimulation(W, H) {
-  // Compute radii from canvas dimensions
-  const radii = {};
-  SKILLS.forEach(s => { radii[s.id] = computeRadius(s, W, H); });
+const GRAVITY             = 0.30;   // px/frame² downward acceleration
+const ACHIEVED_MASS       = 2.0;    // achieved orbs are heavier — fall faster, settle lower
+const PENDING_MASS        = 1.0;    // pending orbs are lighter — arrive later, land higher
+const DAMPING             = 0.92;   // velocity multiplier per frame (fluid settling, not bouncy)
+const RESTITUTION         = 0.04;   // near-zero bounce on collision/wall contact
+const SOLVER_ITERS        = 12;     // collision resolution passes per frame
+const COLLISION_MARGIN    = 2;      // px clearance between outer visual edges
+const PENDING_SPAWN_DELAY = 100;    // frames before pending orbs drop (achieved settle first)
+const CANVAS_FILL_RATIO   = 0.62;   // fraction of canvas area the orb set fills
+```
 
-  // Preserve positions from the previous layout (for resize continuity)
-  const prevPos = {};
-  simNodes.forEach(n => { prevPos[n.id] = { x: n.x, y: n.y }; });
+#### Phased spawning — achieved first, pending after
 
-  // Create simulation nodes, clamped to safe zone from the start
-  simNodes = SKILLS.map(s => {
-    const r    = radii[s.id];
-    const p    = prevPos[s.id];
-    const edge = s.achieved ? r + 9 : r + 1;   // visual outer edge including glow/outline
-    const ix   = Math.max(edge, Math.min(W - edge, p ? p.x : W/2 + (Math.random()-0.5)*80));
-    const iy   = Math.max(edge, Math.min(H - edge, p ? p.y : H/2 + (Math.random()-0.5)*80));
-    return { id: s.id, r, achieved: s.achieved, x: ix, y: iy };
-  });
+On first load, achieved orbs and pending orbs don't all drop simultaneously. Achieved orbs enter the canvas immediately. Pending orbs are held in `pendingQueue` and released after `PENDING_SPAWN_DELAY` frames (~1.7s at 60fps), by which time achieved orbs have settled at the bottom:
 
-  if (simulation) simulation.stop();
+```js
+// Phase 1 (frame 0): achieved orbs spawned above canvas
+simNodes = SKILLS.filter(s => s.achieved).map(s => spawnNode(s, r, w));
 
-  simulation = d3.forceSimulation(simNodes)
-    // Slight repulsion between all orbs — prevents clumping
-    .force('charge', d3.forceManyBody().strength(6))
-    // Gentle pull toward canvas centre
-    .force('center', d3.forceCenter(W/2, H/2).strength(0.04))
-    // Soft collision avoidance (probabilistic, not guaranteed)
-    .force('collide', d3.forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4))
-    // Hard boundary: clamp all nodes to safe zone on every tick
-    .force('bound', () => {
-      simNodes.forEach(n => {
-        const edge = n.achieved ? n.r + 9 : n.r + 1;
-        n.x = Math.max(edge, Math.min(W - edge, n.x));
-        n.y = Math.max(edge, Math.min(H - edge, n.y));
-      });
-    })
-    .alphaDecay(0.025)
-    .on('tick', renderFrame);
-
-  return simulation;
+// Phase 2 (frame 100): pending orbs released from queue
+if (pendingQueue.length > 0 && physicsFrame >= PENDING_SPAWN_DELAY) {
+  pendingQueue.forEach(({ s, r }) => simNodes.push(spawnNode(s, r, w)));
+  pendingQueue = [];
 }
 ```
 
-**Why two boundary enforcement layers:**
+#### physicsTick() — four steps per frame
 
-D3's force execution order is: apply forces → update velocities → update positions. The `bound` force runs *before* D3 updates positions via velocity (`x += vx`). So an orb at the boundary may still drift a pixel beyond if `vx` is nonzero at the moment of the position update.
-
-To guarantee no orb ever renders out of bounds, a second hard clamp runs at the very start of `renderFrame()`, *after* D3 has fully updated all positions:
-
+**Step A — Gravity + damping + integration:**
 ```js
-function renderFrame() {
-  const w = W(), h = H();
-  // Hard guarantee — re-clamp after D3's position updates
-  simNodes.forEach(n => {
-    const edge = n.achieved ? n.r + 9 : n.r + 1;
-    n.x = Math.max(edge, Math.min(w - edge, n.x));
-    n.y = Math.max(edge, Math.min(h - edge, n.y));
-  });
-  // ... rest of rendering
-}
+n.vy += GRAVITY * n.mass;   // heavier orbs accelerate faster
+n.vx *= DAMPING;
+n.vy *= DAMPING;
+n.x  += n.vx;
+n.y  += n.vy;
 ```
 
-**Why NOT zero the velocity in the bound force:**
-An early attempt set `n.vx = 0; n.vy = 0;` when clamping. This caused glitching because `forceCollide` modifies positions directly (not velocities), and zeroing velocity while the collision force was also adjusting positions created conflicting updates. The fix was to clamp positions only, never touch velocities, and add the post-update hard clamp in `renderFrame`.
+**Step B — Boundary walls** (floor, left, right, ceiling): position clamped, velocity reversed and damped by `RESTITUTION`.
 
-**Visual outer edge values:**
+**Step C — Position-based collision solver** (12 iterations):
+```js
+// For every overlapping pair (a, b):
+const overlap = minDist - dist;
+// Push apart proportional to inverse mass — heavier moves less
+a.x -= nx * overlap * (b.mass / totalMass);
+b.x += nx * overlap * (a.mass / totalMass);
+// Impulse transfer along contact normal — gives sliding-past behaviour
+const J = -(1 + RESTITUTION) * velDot / (1/a.mass + 1/b.mass);
+a.vx -= J / a.mass * nx;  b.vx += J / b.mass * nx;
+```
+
+**Step D — Re-clamp** after solver may have shifted nodes past walls.
+
+#### Visual outer edge values
+
 - Achieved orbs: `r + 9` — the soft outer glow draws 3 rings at `r+3`, `r+6`, `r+9`
 - Pending orbs: `r + 1` — accounts for half the 1.5px dashed stroke width
 
-**Resize handling:** A `ResizeObserver` on `#canvas-wrap` rebuilds the simulation with new dimensions on every size change. Previous positions are passed through (clamped to new bounds), so orbs don't scatter on resize.
+These are used by `outerR(n)` as the collision/boundary radius throughout the engine.
+
+#### "Alive but settled" feel
+
+No random noise is added. The settled state feels liquid rather than frozen because:
+- `DAMPING = 0.92` means velocities decay over ~12 frames, not instantly — impulses from collisions propagate through the pile
+- `RESTITUTION = 0.04` means a nudged orb moves slightly and adjusts, like a marble in a jar
+- Gravity is always on — all orbs permanently press into each other and the floor
+
+#### Resize handling
+
+A `ResizeObserver` on `#canvas-wrap` calls `initCanvas()` on every size change. `initPhysics()` detects existing nodes (by checking `prevNodes`) and clamps their positions to the new bounds rather than re-spawning them, so orbs don't scatter on resize.
 
 ```js
 const ro = new ResizeObserver(() => {
@@ -844,8 +853,18 @@ SVG files are read as `data:image/svg+xml;base64,...` — they render correctly 
 
 ```js
 function handleUrlInput(input) {
-  urlImg    = input.value.trim() || null;
-  iconMode  = urlImg ? 'url' : 'emoji';
+  const raw = input.value.trim();
+  // Reject non-http(s) protocols (e.g. javascript:) at the input boundary
+  if (raw && !raw.startsWith('https://') && !raw.startsWith('http://')) {
+    input.style.borderColor = 'rgba(220,80,80,0.6)';
+    return;
+  }
+  input.style.borderColor = '';
+  urlImg = raw || null;
+  iconMode = urlImg ? 'url' : 'emoji';
+  const previewEl = document.getElementById('url-preview');
+  if (urlImg) { previewEl.src = urlImg; previewEl.classList.add('show'); }
+  else previewEl.classList.remove('show');
 }
 ```
 
@@ -1186,22 +1205,54 @@ if (score > bestSat) { bestSat = score; gR = r; gG = g; gB = b; }
 }
 ```
 
-Applied in the detail modal rendering code:
+Applied in the detail modal rendering code using DOM methods (avoids XSS for user-supplied glyph/img values):
 
 ```js
 // In openDetail():
+const iconWrapEl = document.getElementById('m-icon-wrap');
+iconWrapEl.innerHTML = '';
 if (s.img) {
-  document.getElementById('detail-icon').innerHTML =
-    `<img src="${s.img}" class="modal-img-preview" alt="">`;
+  const imgEl = document.createElement('img');
+  imgEl.className = 'modal-img-preview';
+  imgEl.src = s.img;
+  imgEl.alt = '';
+  iconWrapEl.appendChild(imgEl);
 } else {
-  document.getElementById('detail-icon').innerHTML =
-    `<div class="modal-emoji">${s.glyph}</div>`;
+  const emojiDiv = document.createElement('div');
+  emojiDiv.className = 'modal-emoji';
+  emojiDiv.textContent = s.glyph;   // textContent, not innerHTML — safe for any glyph value
+  iconWrapEl.appendChild(emojiDiv);
 }
 ```
 
 ---
 
-### Problem 7 — Icon picker showing only ~40 hardcoded emoji
+### Problem 7 — Canvas blank on load (orbs never rendered)
+
+**Symptom:** The page loaded with a working header and XP bar, but the canvas was completely empty — no orbs, no labels.
+
+**Root cause:** `renderFrame()` was wired to D3's tick event via `.on('tick', renderFrame)`. D3's simulation timer is implemented using `d3.timer`, which internally uses `requestAnimationFrame`. In environments where the page is not the active focused tab (e.g. preview iframes in development tooling), `requestAnimationFrame` callbacks don't fire. The simulation physics ran zero ticks, so `renderFrame` was never called, so no orbs were ever drawn.
+
+Diagnosis: `simNodes` had 19 entries, `simulation.alpha()` was stuck at 1.0000 (never advanced), and `pixiOrbs` was 0. Calling `renderFrame()` manually instantly produced all 19 orbs — confirming the code was correct but the trigger was broken.
+
+**Fix:** Decouple rendering from D3's timer. Wire `renderFrame` to Pixi's own ticker instead:
+
+```js
+// In PIXI.JS SETUP — drives rendering at 60fps whenever the tab is visible
+app.ticker.add(() => { if (simNodes.length) renderFrame(); });
+
+// In buildSimulation — physics only, no rendering callback
+simulation = d3.forceSimulation(simNodes)
+  // ... forces ...
+  .alphaDecay(ALPHA_DECAY);
+  // .on('tick', renderFrame)  ← removed
+```
+
+Pixi's ticker is initialized at app creation (before `loadFromGist` resolves) and fires reliably for any visible browser tab. D3 handles physics (updates `simNodes` positions). Pixi reads `simNodes` and renders. They share state but run independently.
+
+---
+
+### Problem 8 — Icon picker showing only ~40 hardcoded emoji
 
 **Symptom:** The icon picker in the add/edit form had a tiny static list of emoji. Not useful for custom skills with specific icons.
 
@@ -1211,27 +1262,26 @@ The grid tab label was renamed from "emoji" to "icons" to reflect the expanded s
 
 ---
 
+### Problem 9 — D3 force simulation replaced with custom physics engine
+
+**Symptom / motivation:** D3's `forceCollide` is probabilistic — orbs visually overlapped, especially dashed-outline pending orbs. The layout had no sense of gravity or physicality. Resizing caused orbs to scatter unpredictably.
+
+**Root cause:** D3 is a graph/network layout library, not a physics engine. It has no concept of gravity, mass, or velocity. Its collision avoidance iteratively relaxes constraints toward non-overlap but never guarantees it.
+
+**Fix:** Replaced `d3.forceSimulation` and the D3 CDN script entirely with a custom 2D physics engine:
+
+- **Gravity + mass**: `vy += GRAVITY * mass` per frame. Achieved orbs (`mass=2.0`) fall faster and settle lower. Pending orbs (`mass=1.0`) land on top.
+- **Phased spawning**: Achieved orbs drop first (frame 0). Pending orbs are queued and released after 100 frames, by which time achieved orbs have settled at the bottom.
+- **Position-based collision solver**: 12 iterations per frame, pushing overlapping pairs apart proportional to inverse mass.
+- **Impulse transfer**: velocity exchanged along the contact normal gives the "sliding-past" liquid feel.
+- **DAMPING = 0.92**: velocities decay over ~12 frames, so nudges propagate through the pile and die out naturally (marble-in-a-jar feel, not random noise).
+- **RESTITUTION = 0.04**: near-zero bounce — orbs settle, not bounce.
+
+The `CANVAS_FILL_RATIO` was reduced from `0.88` to `0.62` because random circle packing has a physical maximum of ~64% area coverage — at 88% the solver could never fully resolve overlaps within real-time iteration counts.
+
+---
+
 ## Known limitations and future improvements
-
-### Orb overlap (primary known issue)
-
-D3's `forceCollide` is probabilistic — it uses iterative constraint relaxation that converges toward non-overlap but doesn't guarantee it, especially with many orbs or when a new orb is added dynamically. Pending orbs (dashed outline) are especially prone to overlap because the dashed stroke doesn't register with the collision radius.
-
-**The desired behavior:** exactly like balls in a jar — when you add a ball, it slides down and settles into gaps without overlapping anything.
-
-**The right fix (not yet implemented):** replace D3's collision force with a deterministic position-based constraint solver:
-1. Sort nodes largest-first
-2. Per iteration: for every overlapping pair, push them apart along the line between centres by exactly `overlap / 2` each
-3. After separation pass: apply gentle centre pull and boundary clamp
-4. Pre-warm synchronously (300–500 iterations) before first paint
-5. Continue via `requestAnimationFrame` for newly added orbs
-
-This is mathematically guaranteed to converge because each push only resolves overlap without introducing new overlap between already-separated pairs (assuming proper ordering).
-
-**Approaches that did NOT work:**
-- Increasing D3 `forceCollide` radius — still probabilistic, still overlaps
-- `alphaDecay(0.008)` + `tick(300)` pre-warm — helped but didn't eliminate overlaps
-- Custom `setInterval`-based constraint solver replacing D3 entirely — introduced rendering artifacts and was reverted
 
 ### Space coverage
 
@@ -1262,17 +1312,22 @@ Color extraction for external image URLs falls back to wsrv.nl if the image serv
 | Vanilla HTML/CSS/JS | — | Everything — no framework |
 | Syne | Google Fonts | Display font for names and UI |
 | DM Mono | Google Fonts | Monospace font for labels and admin UI |
-| Pixi.js | 7.3.2 | WebGL rendering for circles, glows, and dots |
-| D3.js | 7.8.5 | Force simulation for orb layout |
+| Pixi.js | 7.3.2 | WebGL rendering for circles, glows, and dots at 60fps |
+| Custom physics engine | — | Gravity, mass, position-based collision solver, velocity damping |
 | Canvas API | native | Offscreen 48×48 pixel sampling for color extraction |
-| CSS custom properties | native | `--r` drives all responsive sizing via `calc()` |
+| CSS custom properties | native | `--r` drives all responsive orb sizing via `calc()` |
 | ResizeObserver API | native | Responsive relayout on window resize |
+| requestAnimationFrame | native | 60fps render loop via Pixi's ticker |
+| localStorage API | native | Visitor token + username persistence (with private-browsing fallback) |
+| URLSearchParams API | native | Multi-user routing via `?id=GIST_ID` |
 | Iconify API | public | 200k+ open-source icons; no key required |
 | wsrv.nl | public | Image proxy fallback for external image color extraction (supports binary, adds CORS headers) |
 | GitHub Gist API | v3 | Cross-device JSON persistence |
 | GitHub Pages | — | Static hosting |
 | GitHub Actions | — | CI/CD pipeline for token injection and deployment |
 | GitHub Secrets | — | Encrypted storage for the Gist PAT |
+| Syne | Google Fonts | Display font for names and UI (weights 400–800) |
+| DM Mono | Google Fonts | Monospace font for labels and admin UI (weights 300–500) |
 
 ---
 

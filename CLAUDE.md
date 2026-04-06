@@ -31,8 +31,31 @@ This document is the complete project brief for Claude Code. Read it fully befor
 
 **CDN libraries loaded at runtime:**
 - Pixi.js 7.3.2 — WebGL rendering for circles, glows, dots
-- D3 7.8.5 — force simulation for orb layout
 - Google Fonts — Syne (display) + DM Mono (monospace)
+
+**Native browser APIs used:**
+- Canvas API — offscreen 48×48 pixel sampling for color extraction
+- CSS custom properties — `--r` drives all responsive orb sizing via `calc()`
+- ResizeObserver API — responsive relayout on window resize
+- requestAnimationFrame — 60fps render loop via Pixi's ticker
+- localStorage API — visitor token + username persistence (with private-browsing fallback)
+- URLSearchParams API — multi-user routing via `?id=GIST_ID`
+
+**External services:**
+- GitHub Gist API v3 — cross-device JSON persistence
+- GitHub Pages — static hosting
+- GitHub Actions — CI/CD token injection and deployment
+- GitHub Secrets — encrypted storage for the Gist PAT
+- Iconify API (public) — 200k+ open-source icons, no key required
+- wsrv.nl (public) — image proxy fallback for CORS-blocked external images
+
+**Standards and principles followed:**
+- Position-based dynamics (PBD) — physics collision resolution technique
+- XSS prevention — DOM `textContent`/`createElement` for user-sourced data, never `innerHTML`
+- URL protocol validation — reject `javascript:` and non-http(s) at input boundary
+- CORS proxy fallback pattern — try direct, then proxy, for external image color extraction
+- Single responsibility per function — draw, extract, tick, render are separate concerns
+- Named constants for all magic numbers (no inline literals)
 
 **Why these constraints exist:** The owner consciously chose to stay within GitHub Pages + Gist for simplicity, portability, and zero infrastructure to manage. Do not suggest moving to Vercel, Supabase, or any backend service. The tech stack is a deliberate choice, not a limitation to work around.
 
@@ -77,38 +100,33 @@ z-index 1: #pixi-canvas        ← WebGL canvas, pointer-events: none
 
 **Why hybrid:** Pixi renders circles at 60fps with GPU acceleration and real glow effects. But emoji rendering in WebGL (via Pixi sprites) is unreliable cross-platform — different OS render emoji differently. DOM text stays crisp and consistent everywhere. Hit areas are DOM because Pixi hit detection is more complex than needed.
 
-### Layout: D3 force simulation
+### Layout: custom 2D physics engine
 
-`buildSimulation(W, H)` creates a D3 force simulation with:
-- `forceManyBody().strength(6)` — slight repulsion between all nodes
-- `forceCenter(W/2, H/2).strength(0.04)` — gentle pull toward canvas centre
-- `forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4)` — collision
-- `bound` custom force — hard canvas boundary clamp
-- `alphaDecay(0.025)` — cooling rate
+D3 has been fully removed. The layout is driven by `physicsTick()`, called every frame by the Pixi ticker (60fps). Key functions:
 
-**Known issue — THIS IS THE PRIMARY THING TO FIX:**
-The D3 force simulation does not guarantee hard collision avoidance. Orbs visually overlap, especially their dashed outlines (pending orbs). The owner described the desired behaviour as "balls in a jar" — when you add a ball to a jar, it doesn't overlap existing balls, it slides down and settles into the gaps. The simulation needs to be replaced with or supplemented by a **position-based constraint solver** that guarantees zero overlap between visual outer edges.
+- `initPhysics(w, h)` — builds `simNodes`, phases spawning (achieved first, pending queued)
+- `spawnNode(s, r, w)` — creates a node above the canvas at random x
+- `outerR(n)` — returns the visual boundary radius used for collision and boundary checks
+- `physicsTick()` — advances one frame: gravity → boundary → collision solver → re-clamp
 
-The visual outer radius of each orb is:
-- **Achieved orbs:** `r + 9` (glow extends to `r+9` via 3 soft layers)  
+**Physics constants:**
+- `GRAVITY = 0.30` — px/frame² downward acceleration
+- `ACHIEVED_MASS = 2.0` — heavier, falls faster, settles lower
+- `PENDING_MASS = 1.0` — lighter, arrives later, lands higher
+- `DAMPING = 0.92` — velocity decay per frame (fluid, not frozen)
+- `RESTITUTION = 0.04` — near-zero bounce
+- `SOLVER_ITERS = 12` — collision resolution passes per frame
+- `COLLISION_MARGIN = 2` — px clearance between outer visual edges
+- `PENDING_SPAWN_DELAY = 100` — frames before pending orbs drop (achieved settle first)
+- `CANVAS_FILL_RATIO = 0.62` — fraction of canvas area the orb set fills (physical random packing max ~64%)
+
+**Phased spawning:** On first load, achieved orbs drop immediately. Pending orbs are held in `pendingQueue` and released after 100 frames (~1.7s at 60fps), ensuring achieved orbs settle at the bottom before pending orbs arrive and land on top. On resize or `refreshCanvas()`, existing nodes keep their positions (clamped to new bounds); only newly added orbs drop from above.
+
+**Collision solver:** Position-based dynamics — for every overlapping pair, push them apart along the line between centres, proportional to inverse mass. Impulse transferred along the contact normal gives the "sliding-past" liquid feel.
+
+**Visual outer edge values:**
+- **Achieved orbs:** `r + 9` (glow extends to `r+9` via 3 soft layers)
 - **Pending orbs:** `r + 1` (half the 1.5px dashed stroke width)
-
-Two orbs should touch outline-to-outline with ~2px clearance, never overlapping. The solver must converge fully before the first frame is painted (pre-warming), and continue running to handle new orbs being added dynamically.
-
-**Previous attempts that did NOT work well:**
-1. Increasing D3 `forceCollide` radius and iterations — still probabilistic, still overlaps
-2. Setting `alphaDecay(0.008)` and `tick(300)` pre-warm — helped but didn't eliminate overlaps
-3. Custom `setInterval`-based constraint solver replacing D3 entirely — introduced rendering issues and was reverted
-
-**The right approach (not yet implemented):**
-A proper iterative position-based dynamics solver that:
-1. Sorts nodes largest-first (largest orbs placed first, others fill gaps)
-2. Per iteration: for every overlapping pair, push them apart along the line between centres by exactly `overlap / 2` each
-3. After separation pass: apply gentle centre pull and boundary clamp
-4. Runs until `hasOverlap()` returns false (with max iteration cap)
-5. Pre-warms synchronously before first paint, then continues via `requestAnimationFrame` for smooth animation of newly added orbs
-
-This is mathematically guaranteed to converge because each push only resolves overlap, never introduces new overlap between already-separated pairs (assuming proper ordering).
 
 ### Color extraction
 
@@ -119,7 +137,7 @@ This is mathematically guaranteed to converge because each push only resolves ov
 4. **Glow color:** pixel with highest `saturation × brightness` score (most vibrant)
 5. Results cached in `colorCache` by skill ID
 
-Color extraction is async. The callback fires after extraction and triggers a simulation alpha nudge to repaint. Cache is invalidated on edit (`delete colorCache[s.id]`).
+Color extraction is async. The callback fires after extraction and triggers a `simulation.alpha(0.1).restart()` nudge to repaint (no longer used — now just calls `repaintOrb` directly since physics runs continuously). Cache is invalidated on edit (`delete colorCache[s.id]`).
 
 ### Status dots
 
@@ -154,15 +172,17 @@ Each skill/goal is an object:
 
 `TIER_SCALE = {1:0.48, 2:0.78, 3:1.15, 4:1.68, 5:2.35}` — multipliers for radius computation.
 
-Radii computed from canvas area so orbs always fill the space:
+Radii computed from canvas area so orbs always fill the space proportionally, regardless of orb count:
 ```js
 function computeRadius(s, W, H) {
   const area = W * H;
   const totalSq = SKILLS.reduce((a,x) => a + TIER_SCALE[x.tier]**2, 0);
-  const unit = Math.sqrt(area * 0.88 / (totalSq * Math.PI));
+  const unit = Math.sqrt(area * CANVAS_FILL_RATIO / (totalSq * Math.PI));
   return Math.max(22, Math.round(unit * TIER_SCALE[s.tier]));
 }
 ```
+
+`CANVAS_FILL_RATIO = 0.62` — set below the physical random circle packing maximum (~64%) to allow the physics engine to resolve all collisions without persistent overlap.
 
 ---
 
@@ -244,17 +264,19 @@ const OWNER_USERNAME = 'AshnahKhalidKhan';
 ```
 CONFIG                    — constants
 MODE DETECTION            — URL params, localStorage, visitor/owner
-STATE                     — let variables
-PIXI.JS SETUP             — app, containers
+STATE                     — let variables (incl. physicsFrame, pendingQueue)
+PIXI.JS SETUP             — app, containers, ticker
 COLOR EXTRACTION          — extractColors(), hexN(), hexToNum()
 DOT HELPERS               — dotRadius(), dotOffset()
-D3 FORCE SIMULATION       — computeRadius(), buildSimulation()
+SHARED HELPERS            — calcXP, getIconSrc, findSkill, buildPillsHTML
+PHYSICS ENGINE            — computeRadius(), outerR(), spawnNode(),
+                            initPhysics(), physicsTick()
 PIXI RENDER FRAME         — renderFrame(), createPixiOrb(), updatePixiOrb(),
                             createDomLabel(), updateDomLabel(), destroyOrb()
 INIT / RESIZE             — initCanvas(), ResizeObserver
 XP                        — updateXP()
 GIST SYNC                 — showSyncStatus(), loadFromGist(), saveToGist(),
-                            refreshCanvas()
+                            refreshCanvas(), applySkillsData()
 SECRET KNOCK              — triple-click zone, checkPw(), exitAdmin()
 DETAIL MODAL              — openDetail(), adminEditFromDetail(), etc.
 ADD / EDIT                — resetForm(), openAddModal(), openEditModal(),
@@ -281,6 +303,10 @@ Keep this section in mind to avoid repeating failed approaches:
 | Fixed GAP constant for collision | Too rigid, didn't account for different orb sizes | Replaced by `computeGap(rA, rB)` function |
 | D3 collision with high iterations + slow decay | Still probabilistic, orbs still overlapped | Reverted after failing to eliminate overlaps |
 | setInterval-based constraint solver | Introduced rendering artifacts, `simulation.stop()` calls broke | Fully reverted, D3 restored |
+| D3 entirely (force simulation) | Could not support gravity, mass, or hard collision guarantee | Replaced with custom physics engine |
+| CANVAS_FILL_RATIO = 0.88 with physics solver | Random circle packing max ~64% — solver could not resolve overlaps in real-time | Reduced to 0.62 |
+| Spawn pending orbs with y-offset above canvas | Volume of 16 pending orbs still filled the bottom regardless of spawn height | Replaced with phased spawning (pendingQueue, PENDING_SPAWN_DELAY) |
+| .on('tick', renderFrame) on D3 simulation | D3 timer uses rAF which doesn't fire for inactive/background iframes | Replaced with app.ticker.add() (Pixi ticker, always fires for visible tabs) |
 | `overflow: hidden` on `.drop` | Clipped status dots out of existence | Removed |
 | Status dots as fixed `top: 7px; right: 7px` | Not responsive to orb size or position | Replaced with `dotOffset()` math |
 | Category field in add form | Removed — not shown on canvas, added visual noise | Gone |
@@ -289,34 +315,18 @@ Keep this section in mind to avoid repeating failed approaches:
 
 ## What to work on next (priority order)
 
-### 1. Fix orb overlapping (PRIMARY)
+### 1. Space coverage
 
-This is the most important open issue. See the architecture section above for full details. The desired behaviour is exactly like balls in a jar — hard boundaries, no visual overlap, new orbs settle into gaps naturally.
+With `CANVAS_FILL_RATIO = 0.62`, orbs fill about 62% of canvas area. There is often empty space near the top and corners after settling. Options:
+- Detect large empty regions and slightly scale up orbs (respecting tier ratios)
+- Add a weak upward force to "float" the pile and spread it more vertically
+- Tune `CANVAS_FILL_RATIO` upward carefully (keep below 0.64 to avoid persistent solver overlap)
 
-**Recommended implementation:**
-- Position-based constraint solver replacing or wrapping the D3 simulation
-- `outerR(node)` = `node.achieved ? node.r + 9 : node.r + 1` as the single collision boundary
-- Per iteration: O(n²) pair check, push overlapping pairs apart by `overlap/2` each
-- Pre-warm synchronously (300-500 iterations) before first paint
-- Continue via `requestAnimationFrame` after initial settlement
-- Keep D3's centre-pull and boundary-clamp forces, just replace collision with hard constraints
+### 2. Mobile UX
 
-### 2. Space coverage
+Header wraps on small screens and is hard to navigate. The `+ add` button and `make your own` button could collapse into a menu on narrow viewports.
 
-Even after fixing overlapping, there will be empty space especially near canvas edges and corners. After the collision solver is working correctly, add a secondary pass that:
-- Detects large empty regions
-- Slightly scales up orbs (respecting tier ratios) to better fill the canvas
-- Or adds gentle boundary-hugging forces to pack orbs outward from centre
-
-### 3. Entrance animation
-
-When a new orb is added, it should appear from somewhere (e.g. centre or cursor position) and animate into its settled position via the constraint solver naturally pushing it into place.
-
-### 4. Mobile UX
-
-Header wraps on small screens and is hard to navigate. The `+ add` button and `make your own` button could collapse into a menu.
-
-### 5. Token security note
+### 3. Token security note
 
 The `OWNER_TOKEN` in the HTML is visible to anyone who views source. This is acceptable for the owner's personal use case but worth noting as a limitation. One improvement: hash-compare the token on the client side rather than storing it in plain text — though this only marginally improves security for a static site.
 

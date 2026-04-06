@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pocketful of Somethings</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap');
 
@@ -463,13 +462,17 @@ const DOT_MAX_R            = 10;    // maximum dot radius px
 const DOT_CENTRE_BIAS      = 0.55;  // angle weight toward canvas centre (0 = pure seeded, 1 = pure centre)
 const DOT_PENDING_ALPHA    = 0.7;   // opacity of pending-state dot
 
-// Simulation
-const CANVAS_FILL_RATIO    = 0.88;  // fraction of canvas area the orb set fills
+// Simulation / physics
+const CANVAS_FILL_RATIO    = 0.62;  // fraction of canvas area the orb set fills (physics max ~64%, leave breathing room)
 const ORB_MIN_RADIUS       = 22;    // minimum orb radius px
-const INITIAL_SCATTER      = 80;    // max px scatter from centre on first placement
-const CHARGE_STRENGTH      = 6;     // D3 forceManyBody repulsion strength
-const CENTRE_STRENGTH      = 0.04;  // D3 forceCenter pull strength
-const ALPHA_DECAY          = 0.025; // D3 simulation cooling rate
+const GRAVITY              = 0.30;  // px/frame² downward acceleration
+const ACHIEVED_MASS        = 2.0;   // heavier → falls faster, settles lower
+const PENDING_MASS         = 1.0;   // lighter → falls slower, lands higher
+const DAMPING              = 0.92;  // velocity multiplier per frame (fluid settling feel)
+const RESTITUTION          = 0.04;  // near-zero bounce on collision/boundary
+const SOLVER_ITERS         = 12;    // position-based collision solver passes per frame
+const COLLISION_MARGIN     = 2;     // px clearance kept between outer visual edges
+const PENDING_SPAWN_DELAY  = 100;   // physics frames after which pending orbs drop in (achieved settle first)
 
 // UI timing (ms)
 const XP_ANIM_DELAY        = 80;
@@ -544,6 +547,9 @@ let isAdmin     = false;
 let detailId    = null;
 let deleteId    = null;
 
+let physicsFrame  = 0;       // frame counter for phased spawning
+let pendingQueue  = [];      // pending-skill nodes waiting to drop after achieved settle
+
 let selectedEmoji  = '🚀';
 let selectedStatus = 'achieved';
 let iconMode       = 'emoji';
@@ -572,10 +578,9 @@ const glowContainer = new PIXI.Container();
 app.stage.addChild(glowContainer);
 app.stage.addChild(orbContainer);
 
-/* Drive rendering via Pixi's ticker (rAF-based, always fires for visible pages).
-   D3 simulation runs physics independently via its own timer; renderFrame just
-   reads whatever positions simNodes currently holds. */
-app.ticker.add(() => { if (simNodes.length) renderFrame(); });
+/* Drive physics + rendering via Pixi's ticker (rAF-based, always fires for visible pages).
+   physicsTick() advances the simulation one step; renderFrame() reads simNodes and draws. */
+app.ticker.add(() => { if (simNodes.length) { physicsTick(); renderFrame(); } });
 
 const colorCache = {};
 
@@ -687,10 +692,9 @@ function buildPillsHTML(s) {
 }
 
 /* ════════════════════════════════════════════
-   D3 FORCE SIMULATION
+   PHYSICS ENGINE
 ════════════════════════════════════════════ */
-let simulation  = null;
-let simNodes    = [];
+let simNodes = [];
 
 function computeRadius(s, W, H){
   const area    = W * H;
@@ -699,43 +703,147 @@ function computeRadius(s, W, H){
   return Math.max(ORB_MIN_RADIUS, Math.round(unit * TIER_SCALE[s.tier]));
 }
 
-function buildSimulation(W, H) {
+/* outerR — the visual edge radius used for collision and boundary checks */
+function outerR(n) {
+  return n.r + (n.achieved ? ACHIEVED_GLOW_EDGE : PENDING_EDGE);
+}
+
+/* spawnNode — creates a physics node for a skill at a random x above the canvas */
+function spawnNode(s, r, w) {
+  const mass = s.achieved ? ACHIEVED_MASS : PENDING_MASS;
+  const edge = r + (s.achieved ? ACHIEVED_GLOW_EDGE : PENDING_EDGE);
+  const x    = Math.max(edge, Math.min(w - edge, edge + Math.random() * (w - 2 * edge)));
+  return { id: s.id, r, achieved: s.achieved, mass, x, y: -r, vx: 0, vy: 0 };
+}
+
+/* initPhysics — builds simNodes, preserving positions/velocities for existing nodes.
+   On first load (no existing nodes): achieved orbs drop immediately; pending orbs are
+   queued in pendingQueue and released after PENDING_SPAWN_DELAY frames so achieved
+   orbs settle at the bottom first regardless of their count or size.
+   On resize / refreshCanvas: existing nodes are clamped to new bounds; new nodes
+   (e.g. a newly added skill) drop from above normally. */
+function initPhysics(w, h) {
   const radii = {};
-  SKILLS.forEach(s => { radii[s.id] = computeRadius(s, W, H); });
+  SKILLS.forEach(s => { radii[s.id] = computeRadius(s, w, h); });
 
-  /* preserve existing positions if we are just updating */
-  const prevPos = {};
-  simNodes.forEach(n => { prevPos[n.id] = {x:n.x, y:n.y}; });
+  const prevNodes = {};
+  simNodes.forEach(n => { prevNodes[n.id] = { x: n.x, y: n.y, vx: n.vx, vy: n.vy }; });
 
-  simNodes = SKILLS.map(s => {
-    const r    = radii[s.id];
-    const p    = prevPos[s.id];
-    const edge = s.achieved ? r + ACHIEVED_GLOW_EDGE : r + PENDING_EDGE;
-    const initialX = Math.max(edge, Math.min(W - edge, p ? p.x : W/2 + (Math.random()-0.5)*INITIAL_SCATTER));
-    const initialY = Math.max(edge, Math.min(H - edge, p ? p.y : H/2 + (Math.random()-0.5)*INITIAL_SCATTER));
-    return { id: s.id, r, achieved: s.achieved, x: initialX, y: initialY };
+  const isFirstLoad = Object.keys(prevNodes).length === 0;
+
+  if (isFirstLoad) {
+    /* Phase 1: drop achieved orbs now. Phase 2: pending orbs queued for later. */
+    physicsFrame = 0;
+    pendingQueue = [];
+    simNodes = SKILLS
+      .filter(s => s.achieved)
+      .map(s => spawnNode(s, radii[s.id], w));
+    /* Queue pending skills — physicsTick will add them after PENDING_SPAWN_DELAY */
+    SKILLS.filter(s => !s.achieved).forEach(s => {
+      pendingQueue.push({ s, r: radii[s.id] });
+    });
+  } else {
+    /* Resize or data refresh — preserve existing nodes, drop only new ones */
+    pendingQueue = [];
+    simNodes = SKILLS.map(s => {
+      const r    = radii[s.id];
+      const prev = prevNodes[s.id];
+      const mass = s.achieved ? ACHIEVED_MASS : PENDING_MASS;
+      const edge = r + (s.achieved ? ACHIEVED_GLOW_EDGE : PENDING_EDGE);
+      if (prev) {
+        return {
+          id: s.id, r, achieved: s.achieved, mass,
+          x: Math.max(edge, Math.min(w - edge, prev.x)),
+          y: Math.max(edge, Math.min(h - edge, prev.y)),
+          vx: prev.vx, vy: prev.vy,
+        };
+      }
+      return spawnNode(s, r, w);
+    });
+  }
+}
+
+/* physicsTick — advances the simulation one frame.
+   Called by the Pixi ticker (60 fps) before renderFrame().
+
+   Steps:
+     A  gravity + damping + position update
+     B  boundary response (walls + floor + ceiling)
+     C  position-based collision solver (SOLVER_ITERS passes)
+     D  re-clamp after solver may have pushed nodes out of bounds */
+function physicsTick() {
+  const w = W(), h = H();
+
+  /* ── Phase 2 spawn: release pending orbs after achieved have settled ── */
+  physicsFrame++;
+  if (pendingQueue.length > 0 && physicsFrame >= PENDING_SPAWN_DELAY) {
+    pendingQueue.forEach(({ s, r }) => simNodes.push(spawnNode(s, r, w)));
+    pendingQueue = [];
+  }
+
+  /* ── A: gravity, damping, integrate ── */
+  simNodes.forEach(n => {
+    n.vy += GRAVITY * n.mass;
+    n.vx *= DAMPING;
+    n.vy *= DAMPING;
+    n.x  += n.vx;
+    n.y  += n.vy;
   });
 
-  if (simulation) simulation.stop();
+  /* ── B: boundary walls ── */
+  simNodes.forEach(n => {
+    const edge = outerR(n);
+    if (n.y + edge > h) { n.y = h - edge; n.vy = n.vy < 0 ? n.vy : -Math.abs(n.vy) * RESTITUTION; }
+    if (n.x - edge < 0) { n.x = edge;     n.vx = Math.abs(n.vx) * RESTITUTION; }
+    if (n.x + edge > w) { n.x = w - edge; n.vx = -Math.abs(n.vx) * RESTITUTION; }
+    if (n.y - edge < 0) { n.y = edge;     n.vy = Math.abs(n.vy) * RESTITUTION; }
+  });
 
-  simulation = d3.forceSimulation(simNodes)
-    .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
-    .force('center', d3.forceCenter(W/2, H/2).strength(CENTRE_STRENGTH))
-    .force('collide', d3.forceCollide(d => d.r + dotRadius(d.r) + 4).strength(1).iterations(4))
-    .force('bound', () => {
-      simNodes.forEach(n => {
-        const edge = n.achieved ? n.r + ACHIEVED_GLOW_EDGE : n.r + PENDING_EDGE;
-        n.x = Math.max(edge, Math.min(W - edge, n.x));
-        n.y = Math.max(edge, Math.min(H - edge, n.y));
-      });
-    })
-    .alphaDecay(ALPHA_DECAY);
+  /* ── C: position-based collision solver ── */
+  for (let iter = 0; iter < SOLVER_ITERS; iter++) {
+    for (let i = 0; i < simNodes.length; i++) {
+      for (let j = i + 1; j < simNodes.length; j++) {
+        const a = simNodes[i], b = simNodes[j];
+        const minDist = outerR(a) + outerR(b) + COLLISION_MARGIN;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= minDist * minDist) continue;  // no overlap — skip
 
-  return simulation;
+        const dist = Math.sqrt(distSq) || 0.001;
+        const nx = dx / dist, ny = dy / dist;
+        const overlap    = minDist - dist;
+        const totalMass  = a.mass + b.mass;
+
+        /* position correction proportional to inverse mass — heavier moves less */
+        const aPush = overlap * (b.mass / totalMass);
+        const bPush = overlap * (a.mass / totalMass);
+        a.x -= nx * aPush;  a.y -= ny * aPush;
+        b.x += nx * bPush;  b.y += ny * bPush;
+
+        /* impulse along contact normal — gives the sliding-past behaviour */
+        const velDot = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (velDot < 0) {  /* only when approaching */
+          const J = -(1 + RESTITUTION) * velDot / (1 / a.mass + 1 / b.mass);
+          a.vx -= J / a.mass * nx;  a.vy -= J / a.mass * ny;
+          b.vx += J / b.mass * nx;  b.vy += J / b.mass * ny;
+        }
+      }
+    }
+  }
+
+  /* ── D: re-clamp after solver may have shifted nodes past walls ── */
+  simNodes.forEach(n => {
+    const edge = outerR(n);
+    if (n.y + edge > h) { n.y = h - edge; if (n.vy > 0) n.vy = 0; }
+    if (n.x - edge < 0) { n.x = edge;     if (n.vx < 0) n.vx = 0; }
+    if (n.x + edge > w) { n.x = w - edge; if (n.vx > 0) n.vx = 0; }
+    if (n.y - edge < 0) { n.y = edge;     if (n.vy < 0) n.vy = 0; }
+  });
 }
 
 /* ════════════════════════════════════════════
-   PIXI RENDER FRAME (called every simulation tick)
+   PIXI RENDER FRAME (called every Pixi ticker tick, after physicsTick)
 ════════════════════════════════════════════ */
 const pixiOrbs  = {};  /* id -> {circle, glow, dot} */
 const domLabels = {};  /* id -> {label, hit} */
@@ -744,11 +852,6 @@ const H = () => wrap.offsetHeight;
 
 function renderFrame() {
   const w = W(), h = H();
-  simNodes.forEach(n => {
-    const edge = n.achieved ? n.r + ACHIEVED_GLOW_EDGE : n.r + PENDING_EDGE;
-    n.x = Math.max(edge, Math.min(w - edge, n.x));
-    n.y = Math.max(edge, Math.min(h - edge, n.y));
-  });
   simNodes.forEach(node => {
     const s = findSkill(node.id);
     if (!s) return;
@@ -949,7 +1052,7 @@ function destroyOrb(id) {
 function initCanvas() {
   const w = W(), h = H();
   if (!w || !h) return;
-  buildSimulation(w, h);
+  initPhysics(w, h);
 }
 
 const ro = new ResizeObserver(() => {
@@ -1037,9 +1140,9 @@ async function saveToGist() {
 }
 
 function refreshCanvas() {
-  /* nudge simulation to re-settle with new data */
+  /* rebuild physics nodes — new orbs drop from top, existing ones keep position */
   const w=W(), h=H();
-  buildSimulation(w, h);
+  initPhysics(w, h);
   updateXP();
 }
 
