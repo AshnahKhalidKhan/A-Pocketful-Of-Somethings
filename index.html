@@ -472,7 +472,7 @@ const DAMPING              = 0.92;  // velocity multiplier per frame (fluid sett
 const RESTITUTION          = 0.04;  // near-zero bounce on collision/boundary
 const SOLVER_ITERS         = 12;    // position-based collision solver passes per frame
 const COLLISION_MARGIN     = 2;     // px clearance kept between outer visual edges
-const PENDING_SPAWN_DELAY  = 100;   // physics frames after which pending orbs drop in (achieved settle first)
+const ORB_SPAWN_INTERVAL   = 6;     // physics frames between each sequential orb drop (~0.1s at 60fps)
 
 // UI timing (ms)
 const XP_ANIM_DELAY        = 80;
@@ -547,8 +547,8 @@ let isAdmin     = false;
 let detailId    = null;
 let deleteId    = null;
 
-let physicsFrame  = 0;       // frame counter for phased spawning
-let pendingQueue  = [];      // pending-skill nodes waiting to drop after achieved settle
+let physicsFrame  = 0;       // frame counter for sequential spawning
+let spawnQueue    = [];      // all orbs queued to drop one-by-one (achieved first, then pending)
 
 let selectedEmoji  = '🚀';
 let selectedStatus = 'achieved';
@@ -717,9 +717,9 @@ function spawnNode(s, r, w) {
 }
 
 /* initPhysics — builds simNodes, preserving positions/velocities for existing nodes.
-   On first load (no existing nodes): achieved orbs drop immediately; pending orbs are
-   queued in pendingQueue and released after PENDING_SPAWN_DELAY frames so achieved
-   orbs settle at the bottom first regardless of their count or size.
+   On first load (no existing nodes): all orbs are queued into spawnQueue (achieved first,
+   then pending) and dropped one-by-one every ORB_SPAWN_INTERVAL frames so achieved orbs
+   settle at the bottom before pending orbs arrive.
    On resize / refreshCanvas: existing nodes are clamped to new bounds; new nodes
    (e.g. a newly added skill) drop from above normally. */
 function initPhysics(w, h) {
@@ -732,19 +732,18 @@ function initPhysics(w, h) {
   const isFirstLoad = Object.keys(prevNodes).length === 0;
 
   if (isFirstLoad) {
-    /* Phase 1: drop achieved orbs now. Phase 2: pending orbs queued for later. */
+    /* Queue all orbs — achieved first, then pending — physicsTick drops one every ORB_SPAWN_INTERVAL frames */
     physicsFrame = 0;
-    pendingQueue = [];
-    simNodes = SKILLS
-      .filter(s => s.achieved)
-      .map(s => spawnNode(s, radii[s.id], w));
-    /* Queue pending skills — physicsTick will add them after PENDING_SPAWN_DELAY */
-    SKILLS.filter(s => !s.achieved).forEach(s => {
-      pendingQueue.push({ s, r: radii[s.id] });
+    spawnQueue   = [];
+    simNodes     = [];
+    const achieved = SKILLS.filter(s =>  s.achieved);
+    const pending  = SKILLS.filter(s => !s.achieved);
+    [...achieved, ...pending].forEach(s => {
+      spawnQueue.push({ s, r: radii[s.id] });
     });
   } else {
     /* Resize or data refresh — preserve existing nodes, drop only new ones */
-    pendingQueue = [];
+    spawnQueue = [];
     simNodes = SKILLS.map(s => {
       const r    = radii[s.id];
       const prev = prevNodes[s.id];
@@ -774,12 +773,12 @@ function initPhysics(w, h) {
 function physicsTick() {
   const w = W(), h = H();
 
-  /* ── Phase 2 spawn: release pending orbs after achieved have settled ── */
-  physicsFrame++;
-  if (pendingQueue.length > 0 && physicsFrame >= PENDING_SPAWN_DELAY) {
-    pendingQueue.forEach(({ s, r }) => simNodes.push(spawnNode(s, r, w)));
-    pendingQueue = [];
+  /* ── Sequential spawn: drop one orb every ORB_SPAWN_INTERVAL frames ── */
+  if (spawnQueue.length > 0 && physicsFrame % ORB_SPAWN_INTERVAL === 0) {
+    const { s, r } = spawnQueue.shift();
+    simNodes.push(spawnNode(s, r, w));
   }
+  physicsFrame++;
 
   /* ── A: gravity, damping, integrate ── */
   simNodes.forEach(n => {

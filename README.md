@@ -471,23 +471,24 @@ const DAMPING             = 0.92;   // velocity multiplier per frame (fluid sett
 const RESTITUTION         = 0.04;   // near-zero bounce on collision/wall contact
 const SOLVER_ITERS        = 12;     // collision resolution passes per frame
 const COLLISION_MARGIN    = 2;      // px clearance between outer visual edges
-const PENDING_SPAWN_DELAY = 100;    // frames before pending orbs drop (achieved settle first)
+const ORB_SPAWN_INTERVAL  = 6;      // frames between each sequential orb drop (~0.1s at 60fps)
 const CANVAS_FILL_RATIO   = 0.62;   // fraction of canvas area the orb set fills
 ```
 
-#### Phased spawning — achieved first, pending after
+#### Sequential spawning — one by one, achieved first
 
-On first load, achieved orbs and pending orbs don't all drop simultaneously. Achieved orbs enter the canvas immediately. Pending orbs are held in `pendingQueue` and released after `PENDING_SPAWN_DELAY` frames (~1.7s at 60fps), by which time achieved orbs have settled at the bottom:
+On first load, orbs drop one at a time from a random x position at the top of the screen. Achieved orbs are queued first, in-progress orbs after. One orb is released every `ORB_SPAWN_INTERVAL` frames (~0.1s), so the full set rains in over ~1–2 seconds. Achieved orbs have more time to settle at the bottom before in-progress orbs arrive:
 
 ```js
-// Phase 1 (frame 0): achieved orbs spawned above canvas
-simNodes = SKILLS.filter(s => s.achieved).map(s => spawnNode(s, r, w));
+// All orbs queued at init (achieved first, then pending)
+[...achieved, ...pending].forEach(s => spawnQueue.push({ s, r: radii[s.id] }));
 
-// Phase 2 (frame 100): pending orbs released from queue
-if (pendingQueue.length > 0 && physicsFrame >= PENDING_SPAWN_DELAY) {
-  pendingQueue.forEach(({ s, r }) => simNodes.push(spawnNode(s, r, w)));
-  pendingQueue = [];
+// physicsTick: drop one orb every ORB_SPAWN_INTERVAL frames
+if (spawnQueue.length > 0 && physicsFrame % ORB_SPAWN_INTERVAL === 0) {
+  const { s, r } = spawnQueue.shift();
+  simNodes.push(spawnNode(s, r, w));
 }
+physicsFrame++;
 ```
 
 #### physicsTick() — four steps per frame

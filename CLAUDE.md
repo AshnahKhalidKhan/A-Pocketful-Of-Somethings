@@ -117,10 +117,10 @@ D3 has been fully removed. The layout is driven by `physicsTick()`, called every
 - `RESTITUTION = 0.04` — near-zero bounce
 - `SOLVER_ITERS = 12` — collision resolution passes per frame
 - `COLLISION_MARGIN = 2` — px clearance between outer visual edges
-- `PENDING_SPAWN_DELAY = 100` — frames before pending orbs drop (achieved settle first)
+- `ORB_SPAWN_INTERVAL = 6` — frames between each sequential orb drop (~0.1s at 60fps)
 - `CANVAS_FILL_RATIO = 0.62` — fraction of canvas area the orb set fills (physical random packing max ~64%)
 
-**Phased spawning:** On first load, achieved orbs drop immediately. Pending orbs are held in `pendingQueue` and released after 100 frames (~1.7s at 60fps), ensuring achieved orbs settle at the bottom before pending orbs arrive and land on top. On resize or `refreshCanvas()`, existing nodes keep their positions (clamped to new bounds); only newly added orbs drop from above.
+**Sequential spawning:** On first load, all orbs are queued into `spawnQueue` (achieved first, then pending) and dropped one at a time from a random x position at the top of the screen. One orb is released every `ORB_SPAWN_INTERVAL` frames, so the full set rains in over ~1–2 seconds. Achieved orbs enter first and have time to settle at the bottom before in-progress orbs arrive and land on top. On resize or `refreshCanvas()`, existing nodes keep their positions (clamped to new bounds); only newly added orbs drop from above.
 
 **Collision solver:** Position-based dynamics — for every overlapping pair, push them apart along the line between centres, proportional to inverse mass. Impulse transferred along the contact normal gives the "sliding-past" liquid feel.
 
@@ -264,7 +264,7 @@ const OWNER_USERNAME = 'AshnahKhalidKhan';
 ```
 CONFIG                    — constants
 MODE DETECTION            — URL params, localStorage, visitor/owner
-STATE                     — let variables (incl. physicsFrame, pendingQueue)
+STATE                     — let variables (incl. physicsFrame, spawnQueue)
 PIXI.JS SETUP             — app, containers, ticker
 COLOR EXTRACTION          — extractColors(), hexN(), hexToNum()
 DOT HELPERS               — dotRadius(), dotOffset()
@@ -305,7 +305,8 @@ Keep this section in mind to avoid repeating failed approaches:
 | setInterval-based constraint solver | Introduced rendering artifacts, `simulation.stop()` calls broke | Fully reverted, D3 restored |
 | D3 entirely (force simulation) | Could not support gravity, mass, or hard collision guarantee | Replaced with custom physics engine |
 | CANVAS_FILL_RATIO = 0.88 with physics solver | Random circle packing max ~64% — solver could not resolve overlaps in real-time | Reduced to 0.62 |
-| Spawn pending orbs with y-offset above canvas | Volume of 16 pending orbs still filled the bottom regardless of spawn height | Replaced with phased spawning (pendingQueue, PENDING_SPAWN_DELAY) |
+| Spawn pending orbs with y-offset above canvas | Volume of 16 pending orbs still filled the bottom regardless of spawn height | Replaced with sequential spawning (spawnQueue, ORB_SPAWN_INTERVAL) |
+| Batch-release pending orbs after PENDING_SPAWN_DELAY frames | All pending orbs still hit at once, no visual drama | Replaced with one-by-one sequential drop every ORB_SPAWN_INTERVAL frames |
 | .on('tick', renderFrame) on D3 simulation | D3 timer uses rAF which doesn't fire for inactive/background iframes | Replaced with app.ticker.add() (Pixi ticker, always fires for visible tabs) |
 | `overflow: hidden` on `.drop` | Clipped status dots out of existence | Removed |
 | Status dots as fixed `top: 7px; right: 7px` | Not responsive to orb size or position | Replaced with `dotOffset()` math |
