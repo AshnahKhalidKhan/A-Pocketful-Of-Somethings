@@ -6,7 +6,7 @@
 <title>Pocketful of Somethings</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Roboto+Mono:wght@300;400;500&display=swap');
 
 :root {
   --bg: #07070f;
@@ -22,7 +22,7 @@
 html, body { width: 100%; height: 100%; overflow: hidden; }
 body {
   background: var(--bg);
-  font-family: 'Syne', sans-serif;
+  font-family: 'Roboto', sans-serif;
   color: var(--text);
   display: flex; flex-direction: column;
 }
@@ -37,15 +37,15 @@ header {
 .xp-wrap { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 120px; }
 .xp-track { flex: 1; height: 3px; background: var(--faint); border-radius: 99px; overflow: hidden; }
 .xp-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.8s cubic-bezier(.25,.8,.25,1); }
-.xp-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.xp-label { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .legend { display: flex; gap: 14px; align-items: center; }
-.legend-item { display: flex; align-items: center; gap: 6px; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+.legend-item { display: flex; align-items: center; gap: 6px; font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--muted); }
 .leg-orb { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
 .leg-achieved { background: var(--done); box-shadow: 0 0 6px rgba(29,158,117,0.6); }
 .leg-pending { background: transparent; border: 1.5px dashed rgba(255,255,255,0.25); }
 .header-right { display: flex; align-items: center; gap: 8px; }
 .visitor-tag {
-  font-family: 'DM Mono', monospace; font-size: 10px;
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
   padding: 4px 10px; border-radius: 99px;
   background: rgba(127,119,221,0.08); border: 0.5px solid rgba(127,119,221,0.25);
   color: var(--accent); white-space: nowrap; display: none;
@@ -53,18 +53,18 @@ header {
 .admin-bar { display: none; align-items: center; gap: 8px; }
 body.admin-mode .admin-bar { display: flex; }
 .admin-indicator {
-  font-family: 'DM Mono', monospace; font-size: 10px;
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
   background: rgba(29,158,117,0.1); border: 0.5px solid rgba(29,158,117,0.35);
   color: var(--done); padding: 4px 10px; border-radius: 99px;
 }
 .exit-btn {
-  font-family: 'DM Mono', monospace; font-size: 10px;
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
   padding: 4px 12px; border-radius: 99px; cursor: pointer;
   border: 0.5px solid var(--border); background: transparent; color: var(--muted); transition: all 0.15s;
 }
 .exit-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
 .btn {
-  font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 600;
+  font-family: 'Roboto', sans-serif; font-size: 12px; font-weight: 600;
   padding: 7px 15px; border-radius: 99px; cursor: pointer;
   border: 0.5px solid var(--border); background: transparent; color: var(--muted);
   transition: all 0.15s; letter-spacing: 0.02em;
@@ -95,18 +95,19 @@ body.admin-mode #add-btn { display: block; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   pointer-events: none; text-align: center;
   transition: opacity 0.3s;
+  overflow: hidden; border-radius: 50%;
 }
-.orb-emoji { line-height: 1; display: block; font-size: calc(var(--r) * 0.5); }
+.orb-emoji { line-height: 1; display: block; font-size: calc(var(--r) * 0.38); }
 .orb-name {
-  font-family: 'Syne', sans-serif; font-weight: 600;
+  font-family: 'Roboto', sans-serif; font-weight: 600;
   color: rgba(255,255,255,0.92); line-height: 1.2;
   text-align: center; word-break: break-word;
   text-shadow: 0 1px 4px rgba(0,0,0,0.7);
-  font-size: max(7px, calc(var(--r) * 0.17));
-  width: calc(var(--r) * 1.32);
-  margin-top: calc(var(--r) * 0.04);
+  font-size: max(9px, calc(var(--r) * 0.19));
+  width: calc(var(--r) * 1.0);
+  margin-top: calc(var(--r) * 0.05);
 }
-.orb-img { display: block; flex-shrink: 0; width: var(--r); height: var(--r); object-fit: contain; }
+.orb-img { display: block; flex-shrink: 0; width: calc(var(--r) * 0.60); height: calc(var(--r) * 0.60); object-fit: contain; }
 /* clickable hit areas (invisible, sit on top) */
 .orb-hit {
   position: absolute; border-radius: 50%; cursor: pointer;
@@ -151,7 +152,7 @@ body.admin-mode #add-btn { display: block; }
 .modal-name { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; margin-bottom: 6px; }
 .modal-desc { font-size: 13px; color: var(--muted); line-height: 1.65; text-align: center; margin-bottom: 14px; }
 .modal-pills { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
-.pill { font-family: 'DM Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 99px; border: 0.5px solid var(--border); color: var(--muted); }
+.pill { font-family: 'Roboto Mono', monospace; font-size: 11px; padding: 3px 10px; border-radius: 99px; border: 0.5px solid var(--border); color: var(--muted); }
 .pill.achieved { border-color: rgba(29,158,117,0.5); color: var(--done); }
 .pill.pending-pill { border-color: rgba(127,119,221,0.4); color: var(--accent); }
 .modal-admin-actions { display: none; margin-top: 1.1rem; gap: 8px; justify-content: center; }
@@ -160,11 +161,11 @@ body.admin-mode .modal-admin-actions { display: flex; }
 /* ── form ── */
 .form-title { font-size: 16px; font-weight: 700; margin-bottom: 1.25rem; }
 .field { margin-bottom: 13px; }
-.field label { display: block; font-size: 11px; font-family: 'DM Mono', monospace; color: var(--muted); margin-bottom: 5px; letter-spacing: 0.05em; }
+.field label { display: block; font-size: 11px; font-family: 'Roboto Mono', monospace; color: var(--muted); margin-bottom: 5px; letter-spacing: 0.05em; }
 .field input, .field textarea, .field select {
   width: 100%; background: rgba(255,255,255,0.04);
   border: 0.5px solid var(--border); border-radius: 8px;
-  color: var(--text); font-family: 'Syne', sans-serif; font-size: 14px;
+  color: var(--text); font-family: 'Roboto', sans-serif; font-size: 14px;
   padding: 9px 12px; outline: none; transition: border-color 0.15s; appearance: none;
 }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: rgba(127,119,221,0.5); }
@@ -173,7 +174,7 @@ body.admin-mode .modal-admin-actions { display: flex; }
 .field select option { background: #1a1a2e; }
 .icon-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
 .itab {
-  font-family: 'DM Mono', monospace; font-size: 11px; padding: 5px 12px;
+  font-family: 'Roboto Mono', monospace; font-size: 11px; padding: 5px 12px;
   border-radius: 99px; border: 0.5px solid var(--border);
   background: transparent; color: var(--muted); cursor: pointer; transition: all 0.13s;
 }
@@ -190,7 +191,7 @@ body.admin-mode .modal-admin-actions { display: flex; }
 .icon-search {
   width: 100%; background: rgba(255,255,255,0.04);
   border: 0.5px solid var(--border); border-radius: 8px;
-  color: var(--text); font-family: 'Syne', sans-serif; font-size: 13px;
+  color: var(--text); font-family: 'Roboto', sans-serif; font-size: 13px;
   padding: 7px 10px; outline: none; margin-bottom: 8px; display: block;
   transition: border-color 0.15s;
 }
@@ -202,7 +203,7 @@ body.admin-mode .modal-admin-actions { display: flex; }
 .status-toggle { display: flex; gap: 8px; }
 .status-btn {
   flex: 1; padding: 8px; border-radius: 8px; border: 0.5px solid var(--border);
-  background: transparent; color: var(--muted); font-family: 'Syne', sans-serif;
+  background: transparent; color: var(--muted); font-family: 'Roboto', sans-serif;
   font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
 }
 .status-btn.sel-achieved { border-color: var(--done); background: rgba(29,158,117,0.12); color: var(--done); }
@@ -213,8 +214,8 @@ body.admin-mode .modal-admin-actions { display: flex; }
 /* ── password modal ── */
 .pw-modal { width: min(300px, 90vw); }
 .pw-title { font-size: 15px; font-weight: 700; text-align: center; margin-bottom: 4px; }
-.pw-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.25rem; font-family: 'DM Mono', monospace; }
-.pw-error { font-size: 11px; color: rgba(220,80,80,0.85); text-align: center; margin-top: 8px; font-family: 'DM Mono', monospace; min-height: 16px; }
+.pw-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.25rem; font-family: 'Roboto Mono', monospace; }
+.pw-error { font-size: 11px; color: rgba(220,80,80,0.85); text-align: center; margin-top: 8px; font-family: 'Roboto Mono', monospace; min-height: 16px; }
 
 /* ── onboarding ── */
 .onboard-modal { width: min(480px, 95vw); }
@@ -226,11 +227,11 @@ body.admin-mode .modal-admin-actions { display: flex; }
 .onboard-sub { font-size: 13px; color: var(--muted); line-height: 1.65; margin-bottom: 1.25rem; }
 .onboard-sub a { color: var(--accent); text-decoration: none; }
 .onboard-sub a:hover { text-decoration: underline; }
-.onboard-sub code { background: rgba(255,255,255,0.07); padding: 2px 6px; border-radius: 4px; font-family: 'DM Mono',monospace; font-size: 11px; }
+.onboard-sub code { background: rgba(255,255,255,0.07); padding: 2px 6px; border-radius: 4px; font-family: 'Roboto Mono',monospace; font-size: 11px; }
 .onboard-step-content { min-height: 110px; }
 .onboard-actions { display: flex; gap: 8px; margin-top: 1.25rem; }
 .onboard-actions .btn { flex: 1; }
-.onboard-error { font-family: 'DM Mono', monospace; font-size: 11px; color: rgba(220,80,80,0.8); margin-top: 8px; min-height: 16px; }
+.onboard-error { font-family: 'Roboto Mono', monospace; font-size: 11px; color: rgba(220,80,80,0.8); margin-top: 8px; min-height: 16px; }
 .onboard-success { text-align: center; padding: 0.5rem 0; }
 .onboard-success-icon { font-size: 44px; margin-bottom: 10px; }
 .onboard-success-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
@@ -238,23 +239,23 @@ body.admin-mode .modal-admin-actions { display: flex; }
 .copy-url-wrap { display: flex; gap: 8px; align-items: center; }
 .copy-url-input {
   flex: 1; background: rgba(255,255,255,0.04); border: 0.5px solid var(--border);
-  border-radius: 8px; color: var(--muted); font-family: 'DM Mono', monospace;
+  border-radius: 8px; color: var(--muted); font-family: 'Roboto Mono', monospace;
   font-size: 10px; padding: 8px 10px; outline: none;
 }
 .copy-btn {
-  font-family: 'DM Mono', monospace; font-size: 11px; padding: 7px 14px;
+  font-family: 'Roboto Mono', monospace; font-size: 11px; padding: 7px 14px;
   border-radius: 8px; cursor: pointer; border: 0.5px solid var(--accent);
   background: transparent; color: var(--accent); transition: all 0.15s; white-space: nowrap;
 }
 .copy-btn:hover { background: rgba(127,119,221,0.1); }
 
 /* ── delete confirm ── */
-.del-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.5rem; font-family: 'DM Mono', monospace; }
+.del-sub { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 1.5rem; font-family: 'Roboto Mono', monospace; }
 
 /* ── sync status ── */
 #sync-status {
   position: fixed; bottom: 28px; right: 16px;
-  font-family: 'DM Mono', monospace; font-size: 10px;
+  font-family: 'Roboto Mono', monospace; font-size: 10px;
   padding: 4px 10px; border-radius: 99px; z-index: 200;
   transition: opacity 0.4s; pointer-events: none; opacity: 0;
 }
@@ -580,7 +581,7 @@ app.stage.addChild(orbContainer);
 
 /* Drive physics + rendering via Pixi's ticker (rAF-based, always fires for visible pages).
    physicsTick() advances the simulation one step; renderFrame() reads simNodes and draws. */
-app.ticker.add(() => { if (simNodes.length) { physicsTick(); renderFrame(); } });
+app.ticker.add(() => { if (simNodes.length || spawnQueue.length) { physicsTick(); renderFrame(); } });
 
 const colorCache = {};
 
@@ -968,6 +969,18 @@ function createDomLabel(s, node) {
   domLabels[s.id] = {lbl, hit};
 }
 
+/* Returns a font size (px) that keeps s.name wrapped to ≤ MAX_NAME_LINES lines
+   inside a text box of width r*1.0, preserving the icon as the dominant element. */
+function nameFontSize(name, r) {
+  const MAX_NAME_LINES = 3;
+  const base = Math.max(9, r * 0.19);
+  /* Roboto average character width ≈ 0.52× font-size */
+  const charsPerLine = Math.floor((r * 1.0) / (base * 0.52));
+  const estLines     = Math.ceil(name.length / Math.max(1, charsPerLine));
+  if (estLines <= MAX_NAME_LINES) return base;
+  return Math.max(8, base * MAX_NAME_LINES / estLines);
+}
+
 function updateDomLabel(s, node) {
   const {lbl, hit} = domLabels[s.id];
   const {x, y, r} = node;
@@ -977,12 +990,12 @@ function updateDomLabel(s, node) {
   lbl.style.setProperty('--r', r + 'px');
   lbl.style.left  = x + 'px';
   lbl.style.top   = y + 'px';
-  lbl.style.width = (r * 2) + 'px';
+  lbl.style.width  = (r * 2) + 'px';
+  lbl.style.height = (r * 2) + 'px';
 
   if (s.img) {
     lbl.style.backgroundImage = '';
     lbl.style.borderRadius    = '';
-    lbl.style.height          = '';
 
     /* Persist the <img> element across ticks — avoids re-decoding data: URLs every frame */
     let imgEl = lbl.querySelector('img.orb-img');
@@ -999,6 +1012,7 @@ function updateDomLabel(s, node) {
     if (showName) {
       if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'orb-name'; lbl.appendChild(nameEl); }
       nameEl.textContent = s.name;
+      nameEl.style.fontSize = nameFontSize(s.name, r) + 'px';
     } else if (nameEl) { nameEl.remove(); }
 
   } else {
@@ -1006,7 +1020,6 @@ function updateDomLabel(s, node) {
     if (lbl.querySelector('img.orb-img')) lbl.innerHTML = '';
     lbl.style.backgroundImage = '';
     lbl.style.borderRadius    = '';
-    lbl.style.height          = '';
 
     let emojiEl = lbl.querySelector('.orb-emoji');
     if (!emojiEl) {
@@ -1021,6 +1034,7 @@ function updateDomLabel(s, node) {
     if (showName) {
       if (!nameEl) { nameEl = document.createElement('span'); nameEl.className = 'orb-name'; lbl.appendChild(nameEl); }
       if (nameEl.textContent !== s.name) nameEl.textContent = s.name;
+      nameEl.style.fontSize = nameFontSize(s.name, r) + 'px';
     } else if (nameEl) { nameEl.remove(); }
   }
 
@@ -1426,7 +1440,7 @@ async function obNext() {
 async function obFinish() {
   const errorEl   = document.getElementById('onboard-error');
   const actionsEl = document.getElementById('onboard-actions');
-  actionsEl.innerHTML='<span style="font-family:DM Mono,monospace;font-size:11px;color:var(--muted)">connecting...</span>';
+  actionsEl.innerHTML='<span style="font-family:Roboto Mono,monospace;font-size:11px;color:var(--muted)">connecting...</span>';
   errorEl.textContent='';
   try {
     const res=await fetch(`https://api.github.com/gists/${obGistId}`,{headers:{'Authorization':`token ${obToken}`}});

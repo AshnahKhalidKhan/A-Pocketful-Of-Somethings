@@ -31,7 +31,7 @@ This document is the complete project brief for Claude Code. Read it fully befor
 
 **CDN libraries loaded at runtime:**
 - Pixi.js 7.3.2 — WebGL rendering for circles, glows, dots
-- Google Fonts — Syne (display) + DM Mono (monospace)
+- Google Fonts — Roboto (display) + Roboto Mono (monospace)
 
 **Native browser APIs used:**
 - Canvas API — offscreen 48×48 pixel sampling for color extraction
@@ -248,8 +248,8 @@ const OWNER_USERNAME = 'AshnahKhalidKhan';
 ```
 
 **Fonts:**
-- `Syne` — display/UI font (weights 400, 500, 600, 700, 800)
-- `DM Mono` — monospace for labels, admin UI, XP display (weights 300, 400, 500)
+- `Roboto` — display/UI font (weights 400, 500, 600, 700, 800)
+- `Roboto Mono` — monospace for labels, admin UI, XP display (weight 400)
 
 **Orb visual states:**
 - **Achieved:** filled circle (darkened dominant color from icon), solid glow ring + soft outer glow (vibrant color from icon), filled status dot with glow
@@ -337,7 +337,7 @@ The `OWNER_TOKEN` in the HTML is visible to anyone who views source. This is acc
 
 - The hosting approach (GitHub Pages + Gist only)
 - The single-file architecture (`index.html`)
-- The font choices (Syne + DM Mono)
+- The font choices (Roboto + Roboto Mono)
 - The dark space aesthetic
 - The admin triple-click entry mechanism
 - The non-linear, no-sequence philosophy of the app

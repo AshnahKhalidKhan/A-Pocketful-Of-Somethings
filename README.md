@@ -234,11 +234,11 @@ z-index 1: #pixi-canvas     (WebGL canvas, pointer-events: none)
 ```
 
 **Fonts loaded from Google Fonts:**
-- `Syne` — display/UI font (weights 400–800)
-- `DM Mono` — monospace for labels and admin UI (weights 300–500)
+- `Roboto` — display/UI font (weights 400–800)
+- `Roboto Mono` — monospace for labels and admin UI (weight 400)
 
 ```html
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 ```
 
 **Layout:** `body` is `display: flex; flex-direction: column`. The `header` is `flex-shrink: 0`. The `#canvas-wrap` is `flex: 1`, so it fills all remaining vertical space. `overflow: hidden` prevents scrolling.
@@ -703,7 +703,7 @@ The stylesheet then handles everything with `calc()`:
 
 /* Name text: scales with radius, has a 7px floor */
 .orb-name {
-  font-family: 'Syne', sans-serif;
+  font-family: 'Roboto', sans-serif;
   font-weight: 600;
   color: rgba(255,255,255,0.92);
   line-height: 1.2;
@@ -814,7 +814,7 @@ The search input:
   border: 0.5px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  font-family: 'Syne', sans-serif;
+  font-family: 'Roboto', sans-serif;
   font-size: 13px;
   padding: 7px 10px;
   outline: none;
@@ -1311,8 +1311,8 @@ Color extraction for external image URLs falls back to wsrv.nl if the image serv
 | Thing | Version | What it does |
 |---|---|---|
 | Vanilla HTML/CSS/JS | — | Everything — no framework |
-| Syne | Google Fonts | Display font for names and UI |
-| DM Mono | Google Fonts | Monospace font for labels and admin UI |
+| Roboto | Google Fonts | Display font for names and UI |
+| Roboto Mono | Google Fonts | Monospace font for labels and admin UI |
 | Pixi.js | 7.3.2 | WebGL rendering for circles, glows, and dots at 60fps |
 | Custom physics engine | — | Gravity, mass, position-based collision solver, velocity damping |
 | Canvas API | native | Offscreen 48×48 pixel sampling for color extraction |
@@ -1327,8 +1327,8 @@ Color extraction for external image URLs falls back to wsrv.nl if the image serv
 | GitHub Pages | — | Static hosting |
 | GitHub Actions | — | CI/CD pipeline for token injection and deployment |
 | GitHub Secrets | — | Encrypted storage for the Gist PAT |
-| Syne | Google Fonts | Display font for names and UI (weights 400–800) |
-| DM Mono | Google Fonts | Monospace font for labels and admin UI (weights 300–500) |
+| Roboto | Google Fonts | Display font for names and UI (weights 400–800) |
+| Roboto Mono | Google Fonts | Monospace font for labels and admin UI (weight 400) |
 
 ---
 
